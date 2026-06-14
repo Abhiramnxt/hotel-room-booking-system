@@ -417,11 +417,21 @@ let queryLogs: SqlQueryLog[] = [];
 
 // Helper to save database state
 function saveDB() {
-  fs.writeFile(DB_FILE_PATH, JSON.stringify(state, null, 2), (err) => {
-    if (err) {
-      console.error("Error writing mock DB file asynchronously:", err);
-    }
-  });
+  try {
+    fs.writeFileSync(DB_FILE_PATH, JSON.stringify(state, null, 2));
+  } catch (err) {
+    console.error("Error writing mock DB file synchronously:", err);
+  }
+}
+
+function loadDBFromDisk() {
+  if (!fs.existsSync(DB_FILE_PATH)) return;
+  try {
+    const data = fs.readFileSync(DB_FILE_PATH, 'utf-8');
+    state = JSON.parse(data);
+  } catch (err) {
+    console.error("Error reading mock DB file:", err);
+  }
 }
 
 // Bootstrap DB
@@ -437,6 +447,8 @@ export function initDB() {
       }
     }
   }
+
+  loadDBFromDisk();
 
   if (fs.existsSync(DB_FILE_PATH)) {
     try {
@@ -1244,6 +1256,7 @@ export const dbOps = {
   },
 
   getGuestAccounts: () => {
+    if (isVercel) loadDBFromDisk();
     const sql = `
       SELECT ga.*, r.room_number, b.check_in_date, b.check_out_date 
       FROM guest_accounts ga
@@ -1292,6 +1305,7 @@ export const dbOps = {
     stay_duration: string;
     room_preference: string;
   }) => {
+    if (isVercel) loadDBFromDisk();
     const list = state.guest_accounts || [];
     const count = list.length + 1;
     const guest_id_str = `SNP2026${String(count).padStart(3, '0')}`;
@@ -1341,6 +1355,7 @@ export const dbOps = {
   },
 
   updateGuestAccountPassword: (usernameOrGuestId: string, newPass: string) => {
+    if (isVercel) loadDBFromDisk();
     const sql = `UPDATE guest_accounts SET password_hash = '${newPass}', first_login_password_changed = 1 WHERE username = '${usernameOrGuestId}' OR guest_id_str = '${usernameOrGuestId}';`;
     return executeQuery(sql, ['guest_accounts'], () => {
       const found = (state.guest_accounts || []).find(acc => acc.username === usernameOrGuestId || acc.guest_id_str === usernameOrGuestId);
@@ -1353,6 +1368,7 @@ export const dbOps = {
   },
 
   toggleGuestAccountActivation: (accountId: number) => {
+    if (isVercel) loadDBFromDisk();
     const found = (state.guest_accounts || []).find(acc => acc.account_id === accountId);
     if (!found) throw new Error("Account index not found.");
     const nextStatus = !found.is_activated;
@@ -1365,6 +1381,7 @@ export const dbOps = {
   },
 
   deleteGuestAccount: (accountId: number) => {
+    if (isVercel) loadDBFromDisk();
     const list = state.guest_accounts || [];
     const found = list.find(acc => acc.account_id === accountId);
     if (!found) throw new Error("Account index not found.");
