@@ -14,9 +14,10 @@ import { getRoomUniqueGalleryUrls } from './image_data.js';
 
 // Define DB persistence path
 const isVercel = process.env.VERCEL === '1' || !!process.env.VERCEL;
+const COMMITTED_DB_PATH = path.join(process.cwd(), 'mock_mysql_data.json');
 const DB_FILE_PATH = isVercel
   ? path.join('/tmp', 'mock_mysql_data.json')
-  : path.join(process.cwd(), 'mock_mysql_data.json');
+  : COMMITTED_DB_PATH;
 
 // Interface for DB state
 export interface DatabaseState {
@@ -416,19 +417,61 @@ let state: DatabaseState = {
 let queryLogs: SqlQueryLog[] = [];
 
 // Helper to save database state
-function saveDB() {
+function isPathWritable(filePath: string) {
   try {
-    fs.writeFileSync(DB_FILE_PATH, JSON.stringify(state, null, 2));
+    const dir = path.dirname(filePath);
+    fs.accessSync(dir, fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function writeStateFile(filePath: string) {
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(state, null, 2));
+    console.log(`[Database] Successfully saved DB state to ${filePath}`);
+    return true;
   } catch (err) {
-    console.error("Error writing mock DB file synchronously:", err);
+    console.error(`[Database] Error writing DB file to ${filePath}:`, err);
+    return false;
+  }
+}
+
+function saveDB() {
+  const primarySaved = writeStateFile(DB_FILE_PATH);
+  if (isVercel && DB_FILE_PATH !== COMMITTED_DB_PATH && isPathWritable(COMMITTED_DB_PATH)) {
+    writeStateFile(COMMITTED_DB_PATH);
+  } else if (!primarySaved && DB_FILE_PATH !== COMMITTED_DB_PATH) {
+    writeStateFile(COMMITTED_DB_PATH);
   }
 }
 
 function loadDBFromDisk() {
-  if (!fs.existsSync(DB_FILE_PATH)) return;
+  let fileToRead = DB_FILE_PATH;
+
+  if (!fs.existsSync(fileToRead) && fs.existsSync(COMMITTED_DB_PATH)) {
+    if (isVercel) {
+      try {
+        fs.writeFileSync(fileToRead, fs.readFileSync(COMMITTED_DB_PATH));
+        console.log("[Database] Copied committed DB state into Vercel /tmp on startup.");
+      } catch (err) {
+        console.error("[Database] Failed to copy committed DB into /tmp:", err);
+      }
+    } else {
+      fileToRead = COMMITTED_DB_PATH;
+    }
+  }
+
+  if (!fs.existsSync(fileToRead)) {
+    console.warn(`[Database] DB file not found at ${fileToRead}. Using in-memory initial state.`);
+    return;
+  }
+
   try {
-    const data = fs.readFileSync(DB_FILE_PATH, 'utf-8');
+    const data = fs.readFileSync(fileToRead, 'utf-8');
     state = JSON.parse(data);
+    console.log(`[Database] Loaded DB state from ${fileToRead}. Guest accounts: ${state.guest_accounts?.length ?? 0}, bookings: ${state.bookings?.length ?? 0}`);
   } catch (err) {
     console.error("Error reading mock DB file:", err);
   }
@@ -681,7 +724,7 @@ export const dbOps = {
 
   getBookings: () => {
     if (isVercel) loadDBFromDisk();
-    console.log('[Diagnostics] dbOps.getBookings invoked (reloaded state on Vercel if applicable)');
+    console.log('[Diagnostics] dbOps.getBookings invoked (reloaded state on Vercel if applicable). Guest accounts:', state.guest_accounts?.length, 'Bookings:', state.bookings?.length);
     const sql = `
       SELECT b.*, g.full_name AS guest_name, g.email AS guest_email, g.mobile_number AS guest_phone,
              r.room_number, r.room_type, r.price_per_night
@@ -1265,6 +1308,7 @@ export const dbOps = {
 
   getGuestAccounts: () => {
     if (isVercel) loadDBFromDisk();
+    console.log('[Diagnostics] dbOps.getGuestAccounts invoked (reloaded state on Vercel if applicable). Guest accounts:', state.guest_accounts?.length, 'Guests:', state.guests?.length);
     const sql = `
       SELECT ga.*, r.room_number, b.check_in_date, b.check_out_date 
       FROM guest_accounts ga
