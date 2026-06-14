@@ -984,7 +984,7 @@ function getTemplateMessage(type: string, acc: any, booking?: any): string {
   const guestIdStr = acc.guest_id_str || 'SNP-GUEST-001';
   const username = acc.username || 'guest_snp001';
   const password = acc.password_hash || 'Temp@123';
-  const appUrl = process.env.APP_URL || 'http://localhost:3000';
+  const appUrl = process.env.APP_URL || 'https://sai-nirvana-plaza.vercel.app/';
   const bookingId = booking?.booking_id || '101';
   const checkIn = booking?.check_in_date || '08-Jun-2026';
   const checkOut = booking?.check_out_date || '12-Jun-2026';
