@@ -1,0 +1,913 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect } from 'react';
+import { 
+  ClipboardList, CheckSquare, LogOut, CheckCircle, RefreshCw, 
+  MapPin, ShieldAlert, FileText, Smartphone, Ban, Search,
+  AlertTriangle, X, Calendar, Archive
+} from 'lucide-react';
+import { Booking, UserRole, Room } from '../types';
+import { playSound } from '../soundUtils';
+import { CreateGuestAccountForm } from './CreateGuestAccountForm';
+import { generatePdfReport } from '../utils/pdfGenerator';
+
+interface FrontDeskDashboardProps {
+  currentRole?: UserRole;
+}
+
+export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDeskDashboardProps) {
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  // Custom enhanced states for professional hotel operations
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [statusFilter, setStatusFilter] = useState<string>('All');
+  const [showArchivedOnly, setShowArchivedOnly] = useState(false);
+  const [selectedBookingIds, setSelectedBookingIds] = useState<number[]>([]);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const showLocalToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  // Clear selections when any active filter criteria shifts
+  useEffect(() => {
+    setSelectedBookingIds([]);
+  }, [statusFilter, showArchivedOnly, searchQuery]);
+
+  // Verification Modal states
+  const [activeVerifyBooking, setActiveVerifyBooking] = useState<Booking | null>(null);
+  const [idVerified, setIdVerified] = useState(false);
+  
+  // ── Cancel Booking Modal states ─────────────────────────────────────────────
+  const [cancelTargetBooking, setCancelTargetBooking] = useState<Booking | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  // ────────────────────────────────────────────────────────────────────────────
+
+  const [activeTab, setActiveTab] = useState<'stays' | 'credentials'>('stays');
+
+  const fetchBookings = async () => {
+    setIsLoading(true);
+    try {
+      const [bookingsRes, roomsRes] = await Promise.all([
+        fetch('/api/bookings'),
+        fetch('/api/rooms')
+      ]);
+      if (bookingsRes.ok) {
+        const data = await bookingsRes.json();
+        setBookings(data.bookings);
+      }
+      if (roomsRes.ok) {
+        const data = await roomsRes.json();
+        setRooms(data.rooms);
+      }
+    } catch (e) {
+      console.warn("Could not query front desk data:", e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchBookings();
+  }, []);
+
+  const handleUpdateStatus = async (bookingId: number, nextStatus: Booking['booking_status']) => {
+    playSound('confirm');
+    try {
+      const res = await fetch(`/api/bookings/${bookingId}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStatus })
+      });
+      if (res.ok) {
+        playSound('success');
+        fetchBookings();
+        setActiveVerifyBooking(null);
+        setIdVerified(false);
+      }
+    } catch (e) {
+      console.warn(e);
+    }
+  };
+
+  const handleOpenVerification = (booking: Booking) => {
+    playSound('tap');
+    setActiveVerifyBooking(booking);
+    setIdVerified(booking.booking_status === 'Verified' || booking.booking_status === 'Checked-In');
+  };
+
+  const handleAcceptVerification = async () => {
+    if (!activeVerifyBooking) return;
+    try {
+      const res = await fetch(`/api/bookings/${activeVerifyBooking.booking_id}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'Verified' })
+      });
+      if (res.ok) {
+        playSound('success');
+        setIdVerified(true);
+        fetchBookings();
+      }
+    } catch (e) {
+      console.warn("Could not verify booking documents:", e);
+    }
+  };
+
+  // ── Cancel Booking Handlers ─────────────────────────────────────────────────
+
+  /** Open the cancel confirmation modal — blocks Checked-In / Checked-Out */
+  const handleOpenCancelModal = (booking: Booking) => {
+    playSound('tap');
+    setCancelError(null);
+
+    const nonCancellableStatuses: Booking['booking_status'][] = ['Checked-In', 'Checked-Out'];
+    if (nonCancellableStatuses.includes(booking.booking_status)) {
+      setCancelError('Checked-In or Completed bookings cannot be cancelled.');
+      setCancelTargetBooking(booking);
+      return;
+    }
+
+    setCancelTargetBooking(booking);
+  };
+
+  /** Confirm and execute cancellation */
+  const handleConfirmCancel = async () => {
+    if (!cancelTargetBooking) return;
+    setIsCancelling(true);
+    setCancelError(null);
+    playSound('confirm');
+
+    try {
+      const res = await fetch(`/api/bookings/${cancelTargetBooking.booking_id}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'Cancelled' })
+      });
+
+      if (res.ok) {
+        playSound('success');
+        setCancelTargetBooking(null);
+        fetchBookings(); // Refresh the ledger immediately
+      } else {
+        const errData = await res.json();
+        setCancelError(errData.error || 'Unable to cancel this booking.');
+      }
+    } catch (e) {
+      setCancelError('Network error. Please try again.');
+      console.warn('Cancel booking error:', e);
+    } finally {
+      setIsCancelling(false);
+    }
+  };
+
+  /** Close cancel modal and reset state */
+  const handleCloseCancelModal = () => {
+    setCancelTargetBooking(null);
+    setCancelError(null);
+    setIsCancelling(false);
+  };
+
+  // ────────────────────────────────────────────────────────────────────────────
+
+  // Date and filter logic:
+  const filteredBookings = React.useMemo(() => {
+    return bookings.filter(b => {
+      // 1. Archive Filter
+      const matchesArchive = showArchivedOnly ? !!b.is_archived : !b.is_archived;
+      if (!matchesArchive) return false;
+
+      // 3. Status Filter
+      if (statusFilter !== 'All') {
+        if (statusFilter === 'Pending') {
+          if (b.booking_status !== 'Pending' && b.booking_status !== 'Confirmed') return false;
+        } else {
+          if (b.booking_status !== statusFilter) return false;
+        }
+      }
+
+      // 4. Search Query Filter
+      if (searchQuery.trim() !== '') {
+        const query = searchQuery.toLowerCase();
+        const matchesSearch = 
+          b.guest_name?.toLowerCase().includes(query) ||
+          `bk-${b.booking_id}`.toLowerCase().includes(query) ||
+          b.booking_id.toString().includes(query) ||
+          b.guest_id.toString().includes(query) ||
+          b.room_number?.toLowerCase().includes(query);
+        if (!matchesSearch) return false;
+      }
+
+      return true;
+    });
+  }, [bookings, showArchivedOnly, statusFilter, searchQuery]);
+
+  /** Whether this booking is eligible for cancellation */
+  const isCancellable = (status: Booking['booking_status']) =>
+    status === 'Pending' || status === 'Confirmed' || status === 'Verified';
+
+  const getLocalDateString = (d: Date) => {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
+  
+  const todayStr = getLocalDateString(new Date());
+
+  // Statistics calculation:
+  const todayCheckIns = bookings.filter(b => b.check_in_date === todayStr && !b.is_archived).length;
+  const todayCheckOuts = bookings.filter(b => b.check_out_date === todayStr && !b.is_archived).length;
+  const activeGuestsCount = bookings.filter(b => b.booking_status === 'Checked-In' && !b.is_archived).length;
+  const availableRoomsCount = rooms.filter(r => r.room_status === 'Available').length;
+  const occupiedRoomsCount = rooms.filter(r => r.room_status === 'Occupied').length;
+  const pendingVerificationsCount = bookings.filter(b => (b.booking_status === 'Pending' || b.booking_status === 'Confirmed') && !b.is_archived).length;
+  const handleToggleSelectAll = () => {
+    if (selectedBookingIds.length === filteredBookings.length) {
+      setSelectedBookingIds([]);
+    } else {
+      setSelectedBookingIds(filteredBookings.map(b => b.booking_id));
+    }
+  };
+
+  const handleToggleSelect = (bookingId: number) => {
+    if (selectedBookingIds.includes(bookingId)) {
+      setSelectedBookingIds(selectedBookingIds.filter(id => id !== bookingId));
+    } else {
+      setSelectedBookingIds([...selectedBookingIds, bookingId]);
+    }
+  };
+
+  const handleBulkArchive = async (archive: boolean) => {
+    if (selectedBookingIds.length === 0) return;
+    playSound('confirm');
+    try {
+      const res = await fetch('/api/bookings/archive', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bookingIds: selectedBookingIds,
+          is_archived: archive
+        })
+      });
+      if (res.ok) {
+        playSound('success');
+        showLocalToast(`Successfully ${archive ? 'archived' : 'restored'} ${selectedBookingIds.length} records.`);
+        setSelectedBookingIds([]);
+        fetchBookings();
+      } else {
+        showLocalToast(`Failed to update archive status.`, 'error');
+      }
+    } catch (e) {
+      console.warn("Could not archive/restore bookings:", e);
+      showLocalToast("Network error occurred.", 'error');
+    }
+  };
+
+  const getStatusBadge = (status: Booking['booking_status']) => {
+    switch (status) {
+      case 'Pending':
+      case 'Confirmed':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] uppercase font-bold rounded-full bg-amber-50 text-amber-800 border border-amber-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+            Pending
+          </span>
+        );
+      case 'Verified':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] uppercase font-bold rounded-full bg-blue-50 text-blue-800 border border-blue-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+            Verified
+          </span>
+        );
+      case 'Checked-In':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] uppercase font-bold rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+            Checked-In
+          </span>
+        );
+      case 'Checked-Out':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] uppercase font-bold rounded-full bg-slate-100 text-slate-800 border border-slate-300">
+            <span className="w-1.5 h-1.5 rounded-full bg-slate-500"></span>
+            Checked-Out
+          </span>
+        );
+      case 'Cancelled':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] uppercase font-bold rounded-full bg-rose-50 text-rose-700 border border-rose-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+            Cancelled
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] uppercase font-bold rounded-full bg-slate-100 text-slate-800 border border-slate-200">
+            {status}
+          </span>
+        );
+    }
+  };
+
+  return (
+    <div className="space-y-6" id="front_desk_dashboard">
+      
+      {/* Tab Switcher */}
+      <div className="flex border-b border-slate-200 gap-2 mb-2">
+        <button
+          onClick={() => { playSound('tap'); setActiveTab('stays'); }}
+          className={`px-5 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 cursor-pointer ${
+            activeTab === 'stays'
+              ? 'border-[#003366] text-[#003366]'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          🏨 Front Desk Stay Lodger
+        </button>
+        <button
+          onClick={() => { playSound('tap'); setActiveTab('credentials'); }}
+          className={`px-5 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 cursor-pointer ${
+            activeTab === 'credentials'
+              ? 'border-[#003366] text-[#003366]'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          🔑 Create & Manage Guest Access
+        </button>
+      </div>
+
+      {activeTab === 'credentials' && (
+        <CreateGuestAccountForm currentRole={currentRole} />
+      )}
+
+      {toast && (
+        <div className="fixed bottom-4 right-4 z-50 p-4 rounded-xl shadow-lg border text-xs font-bold flex items-center gap-2 animate-bounce bg-emerald-50 text-emerald-800 border-emerald-200 shadow-emerald-100">
+          <span>{toast.message}</span>
+          <button onClick={() => setToast(null)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {activeTab === 'stays' && (
+        <>
+          {/* Quick Statistics Cards Grid */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
+            <div className="bg-white/90 backdrop-blur border border-slate-200/80 p-4 rounded-2xl shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
+              <div className="flex items-center justify-between text-slate-400">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider">Today's Check-Ins</span>
+                <Calendar className="h-4 w-4 text-indigo-500" />
+              </div>
+              <div className="mt-2">
+                <div className="text-2xl font-black text-[#003366]">{todayCheckIns}</div>
+                <p className="text-[9px] text-slate-500 font-medium mt-0.5">Stays starting today</p>
+              </div>
+            </div>
+
+            <div className="bg-white/90 backdrop-blur border border-slate-200/80 p-4 rounded-2xl shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
+              <div className="flex items-center justify-between text-slate-400">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider">Today's Check-Outs</span>
+                <LogOut className="h-4 w-4 text-amber-500" />
+              </div>
+              <div className="mt-2">
+                <div className="text-2xl font-black text-[#003366]">{todayCheckOuts}</div>
+                <p className="text-[9px] text-slate-500 font-medium mt-0.5">Stays ending today</p>
+              </div>
+            </div>
+
+            <div className="bg-white/90 backdrop-blur border border-slate-200/80 p-4 rounded-2xl shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
+              <div className="flex items-center justify-between text-slate-400">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider">Active Guests</span>
+                <CheckCircle className="h-4 w-4 text-emerald-500" />
+              </div>
+              <div className="mt-2">
+                <div className="text-2xl font-black text-[#003366]">{activeGuestsCount}</div>
+                <p className="text-[9px] text-slate-500 font-medium mt-0.5">Currently checked in</p>
+              </div>
+            </div>
+
+            <div className="bg-white/90 backdrop-blur border border-slate-200/80 p-4 rounded-2xl shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
+              <div className="flex items-center justify-between text-slate-400">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider">Available Rooms</span>
+                <RefreshCw className="h-4 w-4 text-blue-500" />
+              </div>
+              <div className="mt-2">
+                <div className="text-2xl font-black text-[#003366]">{availableRoomsCount}</div>
+                <p className="text-[9px] text-slate-500 font-medium mt-0.5">Vacant & ready chambers</p>
+              </div>
+            </div>
+
+            <div className="bg-white/90 backdrop-blur border border-slate-200/80 p-4 rounded-2xl shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
+              <div className="flex items-center justify-between text-slate-400">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider">Occupied Rooms</span>
+                <ShieldAlert className="h-4 w-4 text-rose-500" />
+              </div>
+              <div className="mt-2">
+                <div className="text-2xl font-black text-[#003366]">{occupiedRoomsCount}</div>
+                <p className="text-[9px] text-slate-500 font-medium mt-0.5">In-house occupied units</p>
+              </div>
+            </div>
+
+            <div className="bg-white/90 backdrop-blur border border-slate-200/80 p-4 rounded-2xl shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
+              <div className="flex items-center justify-between text-slate-400">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider">Pending Verify</span>
+                <AlertTriangle className="h-4 w-4 text-amber-600" />
+              </div>
+              <div className="mt-2">
+                <div className="text-2xl font-black text-[#003366]">{pendingVerificationsCount}</div>
+                <p className="text-[9px] text-slate-500 font-medium mt-0.5">Awaiting desk matches</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Control and Filter Header Panel */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm space-y-4 mb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Status Filter */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold uppercase text-slate-400 tracking-wider">Filter by Status</label>
+                <select
+                  value={statusFilter}
+                  onChange={(e) => { playSound('tap'); setStatusFilter(e.target.value); }}
+                  className="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-[#003366] focus:bg-white"
+                >
+                  <option value="All">All Statuses</option>
+                  <option value="Pending">Pending / Confirmed</option>
+                  <option value="Verified">Verified</option>
+                  <option value="Checked-In">Checked-In</option>
+                  <option value="Checked-Out">Checked-Out</option>
+                  <option value="Cancelled">Cancelled</option>
+                </select>
+              </div>
+
+              {/* Text Search */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold uppercase text-slate-400 tracking-wider">Instant Guest Search</label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                    <Search className="h-4 w-4" />
+                  </span>
+                  <input
+                    type="text"
+                    placeholder="Search Guest Name, Room #, Guest ID, Booking ID..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full text-xs pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-[#003366] focus:bg-white"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Action Toolbar */}
+            <div className="border-t border-slate-100 pt-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                {selectedBookingIds.length > 0 ? (
+                  <>
+                    <span className="text-xs font-bold text-slate-700 bg-slate-100 px-2.5 py-1.5 rounded-lg border border-slate-200">
+                      {selectedBookingIds.length} Selected
+                    </span>
+                    {showArchivedOnly ? (
+                      <button
+                        onClick={() => handleBulkArchive(false)}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <Archive className="h-4 w-4" />
+                        <span>Restore Selected Records</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleBulkArchive(true)}
+                        className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-4 py-2.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <Archive className="h-4 w-4" />
+                        <span>📦 Archive Records</span>
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-xs text-slate-400 italic">Select stay rows below for bulk operations</span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto sm:justify-end">
+                <button
+                  onClick={() => { playSound('tap'); setShowArchivedOnly(!showArchivedOnly); }}
+                  className={`text-xs font-bold px-4 py-2.5 rounded-lg border transition-all cursor-pointer flex items-center gap-1.5 ${
+                    showArchivedOnly
+                      ? 'bg-amber-500 border-amber-600 text-slate-950 font-black'
+                      : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
+                  }`}
+                >
+                  <Archive className="h-4 w-4" />
+                  <span>{showArchivedOnly ? '📂 Show Active Stays' : '📦 View Archived Registry'}</span>
+                </button>
+
+                <button
+                  onClick={fetchBookings}
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold p-2.5 rounded-lg transition-colors cursor-pointer"
+                  title="Force Refresh Live Database"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Bookings table list */}
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-md overflow-hidden">
+            <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+              <h4 className="text-base font-bold text-slate-900 font-heading flex items-center gap-2">
+                <ClipboardList className="h-5 w-5 text-indigo-600" />
+                <span>{showArchivedOnly ? '📦 Archived Booking Archives' : '🏨 Active Operational Booking Ledger'}</span>
+              </h4>
+              <span className="text-xs font-mono text-slate-500 font-bold bg-slate-200/50 px-2 py-0.5 rounded">
+                {filteredBookings.length} Bookings matched
+              </span>
+            </div>
+
+            {isLoading ? (
+              <div className="py-20 text-center text-xs text-slate-400 space-y-2">
+                <RefreshCw className="h-5 w-5 animate-spin mx-auto text-indigo-600" />
+                <p>Scanning relational index entries...</p>
+              </div>
+            ) : filteredBookings.length === 0 ? (
+              <div className="py-16 text-center text-xs text-slate-400">
+                {showArchivedOnly 
+                  ? 'No archived stays match the current filter criteria.' 
+                  : 'No bookings found. Please process reservations under Guest portal.'}
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left font-sans text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-600 font-bold uppercase border-b border-slate-200">
+                      <th className="p-4 w-10 text-center">
+                        <input
+                          type="checkbox"
+                          checked={filteredBookings.length > 0 && selectedBookingIds.length === filteredBookings.length}
+                          onChange={handleToggleSelectAll}
+                          className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer h-4 w-4"
+                        />
+                      </th>
+                      <th className="p-4">Stay Details</th>
+                      <th className="p-4">Guest Information</th>
+                      <th className="p-4">Nights / Check Dates</th>
+                      <th className="p-4">Simulated ID Doc</th>
+                      <th className="p-4">Overall Status</th>
+                      <th className="p-4 text-right">Operational Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredBookings.map((booking) => {
+                      const checkIn = new Date(booking.check_in_date);
+                      const checkOut = new Date(booking.check_out_date);
+                      const nights = Math.max(1, Math.round((checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60 * 24)));
+
+                      return (
+                        <tr key={booking.booking_id} className={`hover:bg-slate-50/50 transition-colors ${selectedBookingIds.includes(booking.booking_id) ? 'bg-slate-50' : ''}`}>
+                          {/* Checkbox column */}
+                          <td className="p-4 w-10 text-center">
+                            <input
+                              type="checkbox"
+                              checked={selectedBookingIds.includes(booking.booking_id)}
+                              onChange={() => handleToggleSelect(booking.booking_id)}
+                              className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer h-4 w-4"
+                            />
+                          </td>
+
+                          {/* Stay Info */}
+                          <td className="p-4">
+                            <span className="text-[10px] font-mono text-slate-400">BK-{booking.booking_id}</span>
+                            <div className="font-bold text-slate-900 text-sm">{booking.room_type}</div>
+                            <span className="text-amber-600 font-semibold font-mono">Room {booking.room_number}</span>
+                          </td>
+
+                          {/* Guest info */}
+                          <td className="p-4">
+                            <div className="font-bold text-slate-800">{booking.guest_name}</div>
+                            <div className="text-slate-500 text-[11px]">Guest ID: SNP-{booking.guest_id}</div>
+                            <div className="text-slate-500 text-[11px]">{booking.guest_email}</div>
+                            <div className="text-slate-400 text-[11px] font-mono">{booking.guest_phone}</div>
+                          </td>
+
+                          {/* Stays duration */}
+                          <td className="p-4">
+                            <div className="font-semibold text-slate-700">{nights} {nights === 1 ? 'Night' : 'Nights'}</div>
+                            <span className="text-[10px] text-slate-400 font-mono block">
+                              {booking.check_in_date} to {booking.check_out_date}
+                            </span>
+                          </td>
+
+                          {/* Government ID document validation indicators */}
+                          <td className="p-4">
+                            <span className="bg-slate-100 p-1.5 px-2.5 rounded font-mono text-slate-700 block max-w-[150px] truncate text-center">
+                              {booking.guest_phone === 'N/A' ? 'No ID Registered' : 'ID Registered'}
+                            </span>
+                          </td>
+
+                          {/* Status badge */}
+                          <td className="p-4">
+                            {getStatusBadge(booking.booking_status)}
+                          </td>
+
+                          {/* Operational Action Buttons */}
+                          <td className="p-4 text-right">
+                            <div className="flex flex-col items-end gap-1.5">
+
+                              {/* Restore from archive button */}
+                              {booking.is_archived ? (
+                                <button
+                                  onClick={async () => {
+                                    playSound('confirm');
+                                    try {
+                                      const res = await fetch('/api/bookings/archive', {
+                                        method: 'PUT',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ bookingIds: [booking.booking_id], is_archived: false })
+                                      });
+                                      if (res.ok) {
+                                        playSound('success');
+                                        showLocalToast(`Successfully restored stay record BK-${booking.booking_id}.`);
+                                        fetchBookings();
+                                      }
+                                    } catch (e) {
+                                      console.warn(e);
+                                    }
+                                  }}
+                                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold p-1.5 px-3 rounded text-[10px] uppercase transition-colors w-full text-center cursor-pointer"
+                                >
+                                  Restore Stay
+                                </button>
+                              ) : (
+                                <>
+                                  {/* Existing action flow */}
+                                  {(booking.booking_status === 'Pending' || booking.booking_status === 'Confirmed') && (
+                                    <button
+                                      onClick={() => handleOpenVerification(booking)}
+                                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold p-1.5 px-3 rounded text-[10px] uppercase transition-colors w-full text-center"
+                                      id={`btn_verify_${booking.booking_id}`}
+                                    >
+                                      Verify
+                                    </button>
+                                  )}
+                                  {booking.booking_status === 'Verified' && (
+                                    <button
+                                      onClick={() => handleOpenVerification(booking)}
+                                      className="bg-[#003366] hover:bg-[#001f3f] text-white font-bold p-1.5 px-3 rounded text-[10px] uppercase transition-colors w-full text-center"
+                                      id={`btn_checkin_${booking.booking_id}`}
+                                    >
+                                      Check-In
+                                    </button>
+                                  )}
+                                  {booking.booking_status === 'Checked-In' && (
+                                    <button
+                                      onClick={() => handleUpdateStatus(booking.booking_id, 'Checked-Out')}
+                                      className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold p-1.5 px-3 rounded text-[10px] uppercase transition-colors flex items-center gap-1 justify-center w-full"
+                                      id={`btn_checkout_${booking.booking_id}`}
+                                    >
+                                      <LogOut className="h-3.5 w-3.5" />
+                                      <span>Process Check-Out</span>
+                                    </button>
+                                  )}
+                                  {booking.booking_status === 'Checked-Out' && (
+                                    <span className="text-slate-400 italic font-medium text-[10px]">Stays Completed</span>
+                                  )}
+                                  {booking.booking_status === 'Cancelled' && (
+                                    <span className="text-rose-600 font-bold text-[10px] uppercase flex items-center gap-1">
+                                      <Ban className="h-3 w-3" /> Cancelled
+                                    </span>
+                                  )}
+
+                                  {/* Cancel Booking button */}
+                                  {isCancellable(booking.booking_status) && (
+                                    <button
+                                      onClick={() => handleOpenCancelModal(booking)}
+                                      className="bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-bold p-1.5 px-3 rounded text-[10px] uppercase transition-all flex items-center gap-1 justify-center w-full"
+                                      id={`btn_cancel_${booking.booking_id}`}
+                                      title="Cancel this booking"
+                                    >
+                                      <Ban className="h-3.5 w-3.5" />
+                                      <span>Cancel Booking</span>
+                                    </button>
+                                  )}
+                                </>
+                              )}
+
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* GUEST ID VERIFICATION TRIGGER MODAL */}
+          {activeVerifyBooking && (
+            <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+              <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl p-6 border border-slate-100 text-center space-y-6">
+                <div>
+                  <span className="bg-amber-100 text-amber-800 text-[10px] font-mono uppercase font-bold px-2.5 py-1 rounded-full">
+                    Front Desk Protection
+                  </span>
+                  <h3 className="text-lg font-bold text-slate-900 font-heading mt-2">
+                    Verify Government Document ID
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    You are verifying guest <strong className="text-slate-800">{activeVerifyBooking.guest_name}</strong> checking into Room <strong className="text-indigo-600">{activeVerifyBooking.room_number}</strong>.
+                  </p>
+                </div>
+
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2 text-left text-xs">
+                  <div className="flex justify-between border-b pb-2">
+                    <span className="text-slate-500 font-medium">Guest Identity Info:</span>
+                    <strong className="text-slate-800">{activeVerifyBooking.guest_name}</strong>
+                  </div>
+                  <div className="flex justify-between border-b pb-2">
+                    <span className="text-slate-500 font-medium">Mobile Number:</span>
+                    <strong className="text-slate-800">{activeVerifyBooking.guest_phone}</strong>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-slate-500 font-medium block">Adhaar / PAN Registration:</span>
+                    <div className="bg-amber-50 p-2 border border-amber-200 rounded font-mono text-center text-sm font-bold text-slate-800">
+                      {activeVerifyBooking.guest_phone === 'N/A' ? 'No Document Registered' : 'Aadhaar Card: Verified on DB Index'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleAcceptVerification()}
+                    disabled={idVerified}
+                    className={`flex-1 font-bold py-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors ${
+                      idVerified 
+                        ? 'bg-emerald-100 text-emerald-800 border-emerald-300' 
+                        : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                    }`}
+                  >
+                    <CheckCircle className="h-4 w-4" />
+                    <span>{idVerified ? 'Documents Approved' : 'Accept Photo Matches'}</span>
+                  </button>
+                  
+                  <button
+                    onClick={() => setActiveVerifyBooking(null)}
+                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold px-4 py-2.5 rounded-lg text-xs"
+                  >
+                    Cancel
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => handleUpdateStatus(activeVerifyBooking.booking_id, 'Checked-In')}
+                  disabled={!idVerified}
+                  className="w-full bg-slate-900 hover:bg-slate-850 disabled:bg-slate-200 disabled:text-slate-400 text-white font-bold py-3 rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <CheckSquare className="h-4 w-4" />
+                  <span>Complete Check-In Process</span>
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      {/* CANCEL BOOKING CONFIRMATION MODAL                                     */}
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      {cancelTargetBooking && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm"
+          id="cancel_booking_modal_overlay"
+        >
+          <div
+            className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-rose-100 overflow-hidden"
+            id="cancel_booking_modal"
+          >
+            {/* Modal Header */}
+            <div className="bg-rose-600 px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-white" />
+                <h3 className="text-sm font-extrabold text-white uppercase tracking-wider font-heading">
+                  Cancel Booking
+                </h3>
+              </div>
+              <button
+                onClick={handleCloseCancelModal}
+                className="text-white/70 hover:text-white transition-colors rounded-full p-1"
+                id="btn_close_cancel_modal"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-5">
+
+              {/* Error message for non-cancellable statuses */}
+              {cancelError && (
+                <div className="bg-rose-50 border border-rose-200 text-rose-800 text-xs p-3 rounded-xl flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-rose-600" />
+                  <span className="font-semibold">{cancelError}</span>
+                </div>
+              )}
+
+              {/* Confirmation message */}
+              {!cancelError && (
+                <p className="text-sm text-slate-700 font-medium text-center">
+                  Are you sure you want to cancel this booking?
+                </p>
+              )}
+
+              {/* Booking Details summary card */}
+              <div className="bg-slate-50 rounded-xl border border-slate-200 divide-y divide-slate-100 text-xs">
+                <div className="flex justify-between items-center px-4 py-2.5">
+                  <span className="text-slate-500 font-semibold uppercase tracking-wide text-[10px]">Guest Name</span>
+                  <span className="font-bold text-slate-900">{cancelTargetBooking.guest_name}</span>
+                </div>
+                <div className="flex justify-between items-center px-4 py-2.5">
+                  <span className="text-slate-500 font-semibold uppercase tracking-wide text-[10px]">Guest ID</span>
+                  <span className="font-mono font-bold text-slate-700">{cancelTargetBooking.guest_email}</span>
+                </div>
+                <div className="flex justify-between items-center px-4 py-2.5">
+                  <span className="text-slate-500 font-semibold uppercase tracking-wide text-[10px]">Booking ID</span>
+                  <span className="font-mono font-bold text-[#003366]">BK-{cancelTargetBooking.booking_id}</span>
+                </div>
+                <div className="flex justify-between items-center px-4 py-2.5">
+                  <span className="text-slate-500 font-semibold uppercase tracking-wide text-[10px]">Room Number</span>
+                  <span className="font-bold text-amber-700">Room {cancelTargetBooking.room_number}</span>
+                </div>
+                <div className="flex justify-between items-center px-4 py-2.5">
+                  <span className="text-slate-500 font-semibold uppercase tracking-wide text-[10px]">Booking Date</span>
+                  <span className="font-mono text-slate-700">
+                    {cancelTargetBooking.check_in_date} → {cancelTargetBooking.check_out_date}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center px-4 py-2.5">
+                  <span className="text-slate-500 font-semibold uppercase tracking-wide text-[10px]">Current Status</span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                    cancelTargetBooking.booking_status === 'Pending' ? 'bg-indigo-100 text-indigo-800' :
+                    cancelTargetBooking.booking_status === 'Confirmed' ? 'bg-indigo-100 text-indigo-800' :
+                    cancelTargetBooking.booking_status === 'Verified' ? 'bg-blue-100 text-blue-800' :
+                    cancelTargetBooking.booking_status === 'Checked-In' ? 'bg-emerald-100 text-emerald-800' :
+                    'bg-slate-100 text-slate-700'
+                  }`}>
+                    {cancelTargetBooking.booking_status}
+                  </span>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-3 pt-1">
+                {/* No, Keep Booking */}
+                <button
+                  onClick={handleCloseCancelModal}
+                  disabled={isCancelling}
+                  className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer"
+                  id="btn_keep_booking"
+                >
+                  No, Keep Booking
+                </button>
+
+                {/* Yes, Cancel Booking — only shown when cancellation is allowed */}
+                {!cancelError && (
+                  <button
+                    onClick={handleConfirmCancel}
+                    disabled={isCancelling}
+                    className="flex-1 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider transition-all disabled:opacity-60 flex items-center justify-center gap-1.5 cursor-pointer"
+                    id="btn_confirm_cancel"
+                  >
+                    {isCancelling ? (
+                      <>
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        <span>Cancelling...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Ban className="h-3.5 w-3.5" />
+                        <span>Yes, Cancel Booking</span>
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+
+    </div>
+  );
+}

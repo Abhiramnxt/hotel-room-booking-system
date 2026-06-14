@@ -1,0 +1,614 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+
+/* @theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-heading: "Outfit", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+} */
+
+body {
+  font-family: var(--font-sans);
+  background-color: #f8fafc;
+  color: #0f172a;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-heading);
+}
+
+/* Custom scrollbar for database terminal log elements */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.05);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.2);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 23, 42, 0.3);
+}
+
+/* Base style overrides if any */
+.glow-gold {
+  box-shadow: 0 0 15px rgba(234, 179, 8, 0.2);
+}
+
+.glow-blue {
+  box-shadow: 0 0 15px rgba(30, 58, 138, 0.15);
+}
+
+@keyframes luxury-shine {
+  0% {
+    background-position: -150% center;
+  }
+
+  15% {
+    background-position: 150% center;
+  }
+
+  100% {
+    background-position: 150% center;
+  }
+}
+
+.title-luxury-gradient-dark-bg {
+  background: linear-gradient(110deg,
+      #ffffff 0%,
+      #ffffff 35%,
+      #F9D976 45%,
+      #FFF 55%,
+      #D4AF37 70%,
+      #ffffff 100%);
+  background-size: 250% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: luxury-shine 9s ease-in-out infinite;
+}
+
+.title-luxury-gradient-light-bg {
+  background: linear-gradient(110deg,
+      #001f3f 0%,
+      #001f3f 35%,
+      #D4AF37 45%,
+      #003366 55%,
+      #F9D976 70%,
+      #001f3f 100%);
+  background-size: 250% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: luxury-shine 9s ease-in-out infinite;
+}
+
+/* ==========================================================================
+   PREMIUM THEME SYSTEM (LIGHT/DARK MODES)
+   ========================================================================== */
+
+body {
+  transition: background-color 300ms cubic-bezier(0.16, 1, 0.3, 1),
+    color 300ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 300ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+body.dark {
+  background-color: #030815 !important;
+  color: #ffffff !important;
+}
+
+/* Ensure smooth transitioning across main layout containers */
+.dark #app_root_layout {
+  background-color: #030815 !important;
+  color: #ffffff !important;
+}
+
+/* 1. AUTO-ADAPTING BACKGROUND COLORS */
+.dark .bg-white,
+.dark .bg-slate-50,
+.dark [class*="bg-white"],
+.dark [class*="bg-slate-50"],
+.dark [id*="panel"] {
+  background-color: #111827 !important;
+  color: #ffffff !important;
+}
+
+/* Explicitly exempt specific cards and forms so they keep custom look */
+.dark #card_manager_login_form {
+  background-color: #111827 !important;
+  color: #ffffff !important;
+}
+
+/* Keep any other ID-based cards dark by default unless light-bg is specified */
+.dark [id*="card"]:not(#light_booking_info_card) {
+  background-color: #111827 !important;
+  color: #ffffff !important;
+}
+
+.dark .bg-slate-100,
+.dark .bg-slate-100\/60,
+.dark .bg-slate-100\/40,
+.dark .bg-slate-550\/5,
+.dark .bg-slate-50\/50,
+.dark .bg-slate-50\/90,
+.dark .bg-slate-200,
+.dark .bg-slate-200\/80,
+.dark [class*="bg-slate-100"],
+.dark [id*="quick_dispatch_switches_grid"] {
+  background-color: #1f2937 !important;
+  color: #ffffff !important;
+}
+
+/* Deep headers background */
+.dark #navbar_header,
+.dark [id*="navbar_header"] {
+  background-image: linear-gradient(to right, #0a0f1d, #0f172a) !important;
+  border-color: rgba(212, 175, 55, 0.3) !important;
+}
+
+/* 2. COMPREHENSIVE TEXT COLOR VISIBILITY & CONTRAST SYSTEMS */
+.dark h1:not(#light_booking_info_card *),
+.dark h2:not(#light_booking_info_card *),
+.dark h3:not(#light_booking_info_card *),
+.dark h4:not(#light_booking_info_card *),
+.dark h5:not(#light_booking_info_card *),
+.dark h6:not(#light_booking_info_card *),
+.dark .text-slate-900:not(#light_booking_info_card *),
+.dark .text-slate-800:not(#light_booking_info_card *),
+.dark .text-slate-700:not(#light_booking_info_card *, #alert_box_inbox *, button *, [class*="bg-emerald-"] *),
+.dark .text-slate-600:not(#light_booking_info_card *, #alert_box_inbox *, button *, [class*="bg-emerald-"] *),
+.dark .text-slate-500:not(#light_booking_info_card *, #alert_box_inbox *, button *, [class*="bg-emerald-"] *),
+.dark .text-slate-400:not(#light_booking_info_card *, #alert_box_inbox *, button *, [class*="bg-emerald-"] *),
+.dark [class*="text-slate-900"]:not(#light_booking_info_card *),
+.dark [class*="text-slate-800"]:not(#light_booking_info_card *),
+.dark [class*="text-slate-700"]:not(#light_booking_info_card *),
+.dark [class*="text-slate-600"]:not(#light_booking_info_card *, #alert_box_inbox *, button *, [class*="bg-emerald-"] *),
+.dark [class*="text-slate-500"]:not(#light_booking_info_card *, #alert_box_inbox *, button *, [class*="bg-emerald-"] *),
+.dark [class*="text-slate-400"]:not(#light_booking_info_card *, #alert_box_inbox *, button *, [class*="bg-emerald-"] *) {
+  color: #cbd5e1 !important;
+}
+
+.dark [class*="text-[#001f3f]"]:not(#light_booking_info_card *, #alert_box_inbox *),
+.dark [class*="text-[#003366]"]:not(#light_booking_info_card *, #alert_box_inbox *),
+.dark [class*="text-[#0f172a]"]:not(#light_booking_info_card *, #alert_box_inbox *),
+.dark [class*="text-[#0F172A]"]:not(#light_booking_info_card *, #alert_box_inbox *) {
+  color: #ffffff !important;
+}
+
+.dark .group:hover [class*="group-hover:text-"] {
+  color: #f9d976 !important;
+}
+
+.dark .text-amber-500,
+.dark [class*="text-[#F9D976]"],
+.dark [class*="text-[#D4AF37]"] {
+  color: #f9d976 !important;
+}
+
+.dark a {
+  color: #f4c430 !important;
+}
+
+/* 3. INPUT ELEMENTS, SELECT BOXES AND TEXTAREAS */
+.dark input,
+.dark select,
+.dark textarea {
+  background-color: #111827 !important;
+  color: #ffffff !important;
+  border-color: rgba(212, 175, 55, 0.3) !important;
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #cbd5e1 !important;
+}
+
+/* Avoid black text inside dates or option items */
+.dark option,
+.dark select option {
+  background-color: #111827 !important;
+  color: #ffffff !important;
+}
+
+/* 4. PREMIUM BORDER ADAPTATIONS */
+.dark .border,
+.dark .border-slate-100,
+.dark .border-slate-200,
+.dark .border-slate-300,
+.dark .border-slate-200\/80,
+.dark .border-slate-500\/25,
+.dark .border-slate-500\/35,
+.dark [class*="border-slate-"] {
+  border-color: rgba(212, 175, 55, 0.22) !important;
+}
+
+/* 5. SPECIFIC SUB-COMPONENTS & SHADOW GLOWS */
+.dark .shadow,
+.dark .shadow-sm,
+.dark .shadow-md,
+.dark .shadow-lg,
+.dark .shadow-xl,
+.dark .shadow-2xl {
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5), 0 0 15px rgba(212, 175, 55, 0.05) !important;
+}
+
+/* User Role Dropdown components inside Header should be highly visible */
+.dark #role_dropdown_btn {
+  background-color: #1f2937 !important;
+  color: #ffffff !important;
+  border-color: rgba(212, 175, 55, 0.35) !important;
+}
+
+.dark #role_dropdown_menu_panel {
+  background-color: #111827 !important;
+  border-color: rgba(212, 175, 55, 0.40) !important;
+}
+
+.dark #role_dropdown_menu_panel button {
+  color: #ffffff !important;
+}
+
+.dark #role_dropdown_menu_panel button:hover {
+  background-color: rgba(212, 175, 55, 0.15) !important;
+}
+
+/* ==========================================================================
+   SCENARIOS-SPECIFIC HIGH CONTRAST DARK MODE SOLUTIONS (THEME RECTIFICATION)
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   SCREEN 1 — ACTIVE STAY DASHBOARD
+   When booking detail card uses white/light background, retain pure readability
+   -------------------------------------------------------------------------- */
+#light_booking_info_card {
+  background: white !important;
+  background-color: #ffffff !important;
+  background-image: linear-gradient(to bottom right, #ffffff, #f8fafc) !important;
+  color: #1E293B !important;
+  border: 1px solid #cbd5e1 !important;
+}
+
+#light_booking_info_card h4,
+#light_booking_info_card [class*="text-[#003366]"] {
+  color: #0F172A !important;
+}
+
+#light_booking_info_card span[class*="text-slate-400"],
+#light_booking_info_card .tracking-wider {
+  color: #334155 !important;
+}
+
+#light_booking_info_card span[class*="text-slate-800"],
+#light_booking_info_card .font-semibold,
+#light_booking_info_card .font-mono,
+#light_booking_info_card p:not(button *),
+#light_booking_info_card span:not(button *) {
+  color: #1E293B !important;
+}
+
+/* Ensure content inside buttons in light booking info card inherits proper colors */
+#light_booking_info_card button *,
+.dark #light_booking_info_card button * {
+  color: inherit !important;
+}
+
+/* Ensure italic paragraph (e.g. next to the AI button) matches its muted color */
+#light_booking_info_card p.italic,
+.dark #light_booking_info_card p.italic {
+  color: #94a3b8 !important;
+}
+
+.dark #light_booking_info_card {
+  background: #111827 !important;
+  background-color: #111827 !important;
+  background-image: none !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(212, 175, 55, 0.22) !important;
+}
+
+.dark #light_booking_info_card h4,
+.dark #light_booking_info_card [class*="text-[#003366]"] {
+  color: #F9D976 !important;
+}
+
+.dark #light_booking_info_card span[class*="text-slate-400"],
+.dark #light_booking_info_card .tracking-wider {
+  color: #94a3b8 !important;
+}
+
+.dark #light_booking_info_card span[class*="text-slate-800"],
+.dark #light_booking_info_card .font-semibold,
+.dark #light_booking_info_card .font-mono,
+.dark #light_booking_info_card p:not(button *),
+.dark #light_booking_info_card span:not(button *) {
+  color: #e2e8f0 !important;
+}
+
+#light_booking_info_card #notice_self_service {
+  background-color: rgba(15, 23, 42, 0.04) !important;
+  border: 1px solid rgba(15, 23, 42, 0.08) !important;
+}
+
+#light_booking_info_card #notice_self_service strong {
+  color: #0F172A !important;
+}
+
+#light_booking_info_card #notice_self_service span {
+  color: #334155 !important;
+}
+
+.dark #light_booking_info_card #notice_self_service {
+  background-color: rgba(255, 255, 255, 0.04) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+.dark #light_booking_info_card #notice_self_service strong {
+  color: #F9D976 !important;
+}
+
+.dark #light_booking_info_card #notice_self_service span {
+  color: #cbd5e1 !important;
+}
+
+/* --------------------------------------------------------------------------
+   SCREEN 2 — ROOM CARD RATING
+   -------------------------------------------------------------------------- */
+.room-rating-badge,
+.dark .room-rating-badge {
+  background-color: #FFF7D6 !important;
+  color: #92400E !important;
+  border-color: #fef08a !important;
+}
+
+.room-rating-star,
+.dark .room-rating-star {
+  color: #D4AF37 !important;
+  /* Gold */
+  fill: #D4AF37 !important;
+}
+
+/* Review Count styling depending on room list background context */
+.room-review-count {
+  color: #64748B !important;
+  /* Soft dark gray in light theme */
+}
+
+.dark .room-review-count {
+  color: #CBD5E1 !important;
+  /* Premium light color in dark theme */
+}
+
+/* --------------------------------------------------------------------------
+   SCREEN 3 — GUEST CREDENTIAL REGISTRY
+   -------------------------------------------------------------------------- */
+.custom-badge-room-no,
+.dark .custom-badge-room-no {
+  background-color: #FFFFFF !important;
+  color: #1E293B !important;
+  border: 1px solid #cbd5e1 !important;
+}
+
+.custom-badge-changed,
+.dark .custom-badge-changed {
+  background-color: #DCFCE7 !important;
+  color: #166534 !important;
+  border: 1px solid #bbf7d0 !important;
+}
+
+.custom-badge-active,
+.dark .custom-badge-active {
+  background-color: #ECFDF5 !important;
+  color: #15803D !important;
+  border: 1px solid #a7f3d0 !important;
+}
+
+/* --------------------------------------------------------------------------
+   SCREEN 4 — NOTIFICATION PANEL
+   -------------------------------------------------------------------------- */
+#alert_box_inbox,
+.dark #alert_box_inbox {
+  background-color: #ffffff !important;
+  border: 1px solid #cbd5e1 !important;
+  box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1) !important;
+}
+
+#alert_box_inbox h5,
+.dark #alert_box_inbox h5 {
+  color: #0F172A !important;
+}
+
+#alert_box_inbox .notification-card-unreads,
+.dark #alert_box_inbox .notification-card-unreads {
+  background-color: #fffbeb !important;
+  /* Amber-50 */
+  border: 1px solid #fde68a !important;
+  /* Amber-200 */
+}
+
+#alert_box_inbox .notification-card-reads,
+.dark #alert_box_inbox .notification-card-reads {
+  background-color: #f8fafc !important;
+  /* Slate-50 */
+  border: 1px solid #e2e8f0 !important;
+  /* Slate-200 */
+}
+
+#alert_box_inbox .notification-title,
+.dark #alert_box_inbox .notification-title {
+  color: #0F172A !important;
+}
+
+#alert_box_inbox .notification-desc,
+.dark #alert_box_inbox .notification-desc {
+  color: #334155 !important;
+}
+
+/* --------------------------------------------------------------------------
+   SCREEN 5 — COMMUNICATION TRIGGER SIMULATOR
+   -------------------------------------------------------------------------- */
+.custom-badge-front-desk,
+.dark .custom-badge-front-desk {
+  background-color: #D1FAE5 !important;
+  color: #065F46 !important;
+  border: 1px solid #a7f3d0 !important;
+}
+
+.custom-badge-manager,
+.dark .custom-badge-manager {
+  background-color: #FEF3C7 !important;
+  color: #92400E !important;
+  border: 1px solid #fde68a !important;
+}
+
+/* --------------------------------------------------------------------------
+   SCREEN 6 — MANAGER LOGIN PAGE CONTRAST REMEDIES
+   -------------------------------------------------------------------------- */
+.dark #manager_login_role_dropdown {
+  background-color: #111827 !important;
+  color: #FFFFFF !important;
+  border: 1px solid rgba(212, 175, 55, 0.45) !important;
+}
+
+.dark #manager_login_role_dropdown span {
+  color: #FFFFFF !important;
+}
+
+.dark #card_manager_login_form label,
+.dark #manager_private_auth_container label {
+  color: #F8FAFC !important;
+}
+
+.dark #card_manager_login_form input {
+  background-color: #111827 !important;
+  color: #FFFFFF !important;
+  border-color: rgba(212, 175, 55, 0.35) !important;
+}
+
+.dark #card_manager_login_form input::placeholder {
+  color: #CBD5E1 !important;
+}
+
+/* Booking Modal and Popovers styling overrides */
+.dark #booking_modal_inner,
+.dark [id*="booking_modal_inner"] {
+  background-color: #111827 !important;
+  border-color: rgba(212, 175, 55, 0.4) !important;
+  color: #ffffff !important;
+}
+
+/* Tables and logs overrides */
+.dark table {
+  background-color: #111827 !important;
+}
+
+.dark tr:hover {
+  background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+.dark th {
+  background-color: #0c1221 !important;
+  color: #f9d976 !important;
+}
+
+.dark td {
+  border-color: rgba(212, 175, 55, 0.15) !important;
+  color: #cbd5e1 !important;
+}
+
+/* Status Labels & Badges Adaptation for comfortable dark themes */
+.dark .bg-emerald-100 {
+  background-color: rgba(16, 185, 129, 0.2) !important;
+  color: #a7f3d0 !important;
+  border: 1px solid rgba(16, 185, 129, 0.3) !important;
+}
+
+.dark .text-emerald-800 {
+  color: #a7f3d0 !important;
+}
+
+.dark .bg-rose-100 {
+  background-color: rgba(244, 63, 94, 0.2) !important;
+  color: #fecdd3 !important;
+  border: 1px solid rgba(244, 63, 94, 0.3) !important;
+}
+
+.dark .text-rose-800 {
+  color: #fecdd3 !important;
+}
+
+.dark .bg-amber-100 {
+  background-color: rgba(245, 158, 11, 0.2) !important;
+  color: #fde68a !important;
+  border: 1px solid rgba(245, 158, 11, 0.3) !important;
+}
+
+.dark .text-amber-800 {
+  color: #fde68a !important;
+}
+
+.dark .bg-blue-100 {
+  background-color: rgba(59, 130, 246, 0.2) !important;
+  color: #bfdbfe !important;
+  border: 1px solid rgba(59, 130, 246, 0.3) !important;
+}
+
+.dark .text-blue-800 {
+  color: #bfdbfe !important;
+}
+
+.dark .bg-slate-100 {
+  background-color: #1f2937 !important;
+  color: #ffffff !important;
+}
+
+.dark .text-slate-800 {
+  color: #ffffff !important;
+}
+
+/* AI Assistant & chat adjustments */
+.dark #blank_active_stay,
+.dark [id*="blank_active_stay"] {
+  background-color: #111827 !important;
+  border-color: rgba(212, 175, 55, 0.3) !important;
+}
+
+.dark #ai_booking_summary_text,
+.dark [id*="ai_booking_summary_text"] {
+  background-color: #1f2937 !important;
+  color: #ffffff !important;
+  border-color: rgba(212, 175, 55, 0.25) !important;
+}
+
+/* Recharts grid lines and labels contrast fix */
+.dark .recharts-cartesian-grid-horizontal line,
+.dark .recharts-cartesian-grid-vertical line {
+  stroke: rgba(255, 255, 255, 0.15) !important;
+}
+
+.dark .recharts-text,
+.dark .recharts-label {
+  fill: #e2e8f0 !important;
+}
+
+.dark .recharts-legend-item-text {
+  color: #e2e8f0 !important;
+}
+
+.dark .bg-slate-100 p-1,
+.dark .bg-slate-100 {
+  background-color: #0c1221 !important;
+}
