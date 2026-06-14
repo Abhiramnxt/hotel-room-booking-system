@@ -22,7 +22,16 @@ initDB();
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 
+app.set('etag', false);
 app.use(express.json());
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/')) {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+  }
+  next();
+});
 
 // Initialize GoogleGenAI lazily to avoid crashing if GEMINI_API_KEY is not defined yet
 let googleAiClient: GoogleGenAI | null = null;
@@ -149,6 +158,10 @@ app.post('/api/bookings', (req, res) => {
 // 4. Fetch Bookings
 app.get('/api/bookings', (req, res) => {
   console.log('[Diagnostics] GET /api/bookings called');
+  console.log('[Diagnostics] GET /api/bookings conditional headers:', {
+    ifNoneMatch: req.headers['if-none-match'],
+    ifModifiedSince: req.headers['if-modified-since']
+  });
   const bookings = dbOps.getBookings();
   try { console.log(`[Diagnostics] GET /api/bookings returning ${bookings?.length || 0} bookings`); } catch (e) {}
   res.json({ bookings });
