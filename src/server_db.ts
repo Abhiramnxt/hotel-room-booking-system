@@ -11,6 +11,9 @@ import {
   Staff, RoomAvailability, SqlQueryLog, GuestAccount, CommunicationLog
 } from './types.js';
 import { getRoomUniqueGalleryUrls } from './image_data.js';
+import { initMysqlPool, query, execute } from './mysql_client';
+
+const useMySQL = !!process.env.MYSQL_HOST;
 
 // Define DB persistence path
 const isVercel = process.env.VERCEL === '1' || !!process.env.VERCEL;
@@ -439,6 +442,11 @@ function writeStateFile(filePath: string) {
 }
 
 function saveDB() {
+  if (useMySQL) {
+    // Persist to MySQL asynchronously (fire-and-forget)
+    saveStateToMySQL().catch(err => console.error('[Database] Error saving state to MySQL:', err));
+    return;
+  }
   const primarySaved = writeStateFile(DB_FILE_PATH);
   if (isVercel && DB_FILE_PATH !== COMMITTED_DB_PATH && isPathWritable(COMMITTED_DB_PATH)) {
     writeStateFile(COMMITTED_DB_PATH);
@@ -448,6 +456,10 @@ function saveDB() {
 }
 
 function loadDBFromDisk() {
+  if (useMySQL) {
+    // In MySQL mode, we will load state from database during initDB
+    return;
+  }
   let fileToRead = DB_FILE_PATH;
 
   if (!fs.existsSync(fileToRead) && fs.existsSync(COMMITTED_DB_PATH)) {
@@ -477,8 +489,125 @@ function loadDBFromDisk() {
   }
 }
 
+async function saveStateToMySQL() {
+  try {
+    initMysqlPool();
+    // Simple sync: replace tables by deleting and reinserting state arrays
+    // Note: this strategy is acceptable for small demo data; replace with upserts for production.
+    await execute('START TRANSACTION');
+
+    // Guests
+    await execute('DELETE FROM guests');
+    for (const g of state.guests) {
+      await execute(`INSERT INTO guests (guest_id, full_name, email, mobile_number, address, government_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, [g.guest_id, g.full_name, g.email, g.mobile_number, g.address, g.government_id, g.created_at]);
+    }
+
+    // Guest accounts
+    await execute('DELETE FROM guest_accounts');
+    for (const a of state.guest_accounts) {
+      await execute(`INSERT INTO guest_accounts (account_id, guest_id_str, username, password_hash, full_name, mobile_number, email, stay_duration, room_preference, is_activated, first_login_password_changed, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [a.account_id, a.guest_id_str, a.username, a.password_hash, a.full_name, a.mobile_number, a.email, a.stay_duration, a.room_preference, a.is_activated ? 1 : 0, a.first_login_password_changed ? 1 : 0, a.created_at]);
+    }
+
+    // Bookings
+    await execute('DELETE FROM bookings');
+    for (const b of state.bookings) {
+      await execute(`INSERT INTO bookings (booking_id, guest_id, room_id, check_in_date, check_out_date, booking_status, booking_source, assigned_staff, created_at, is_archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [b.booking_id, b.guest_id, b.room_id, b.check_in_date, b.check_out_date, b.booking_status, b.booking_source, (b as any).assigned_staff || null, b.created_at, b.is_archived ? 1 : 0]);
+    }
+
+    // Communication logs
+    await execute('DELETE FROM communication_logs');
+    for (const l of state.communication_logs) {
+      await execute(`INSERT INTO communication_logs (log_id, guest_id_str, guest_name, communication_type, channel, status_info, timestamp, staff_member, delivery_attempts, failure_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [l.log_id, l.guest_id_str, l.guest_name, l.communication_type, l.channel, l.status_info, l.timestamp, l.staff_member || null, l.delivery_attempts || 0, l.failure_reason || '']);
+    }
+
+    await execute('COMMIT');
+    console.log('[Database] State saved to MySQL successfully');
+  } catch (err) {
+    try { await execute('ROLLBACK'); } catch(e) {}
+    console.error('[Database] Failed to persist complete state to MySQL:', err);
+  }
+}
+
+async function loadStateFromMySQL() {
+  try {
+    initMysqlPool();
+    // Load basic tables into memory
+    const guestsRows: any[] = await query('SELECT * FROM guests ORDER BY guest_id DESC');
+    state.guests = guestsRows.map(r => ({
+      guest_id: r.guest_id,
+      full_name: r.full_name,
+      email: r.email,
+      mobile_number: r.mobile_number,
+      address: r.address,
+      government_id: r.government_id,
+      created_at: r.created_at
+    }));
+
+    const accountsRows: any[] = await query('SELECT * FROM guest_accounts ORDER BY account_id DESC');
+    state.guest_accounts = accountsRows.map(r => ({
+      account_id: r.account_id,
+      guest_id_str: r.guest_id_str,
+      username: r.username,
+      password_hash: r.password_hash,
+      full_name: r.full_name,
+      mobile_number: r.mobile_number,
+      email: r.email,
+      stay_duration: r.stay_duration,
+      room_preference: r.room_preference,
+      is_activated: !!r.is_activated,
+      first_login_password_changed: !!r.first_login_password_changed,
+      created_at: r.created_at
+    }));
+
+    const bookingsRows: any[] = await query('SELECT * FROM bookings ORDER BY booking_id DESC');
+    state.bookings = bookingsRows.map(r => ({
+      booking_id: r.booking_id,
+      guest_id: r.guest_id,
+      room_id: r.room_id,
+      check_in_date: r.check_in_date,
+      check_out_date: r.check_out_date,
+      booking_status: r.booking_status,
+      booking_source: r.booking_source,
+      assigned_staff: r.assigned_staff,
+      created_at: r.created_at,
+      is_archived: !!r.is_archived
+    }));
+
+    const commRows: any[] = await query('SELECT * FROM communication_logs ORDER BY log_id DESC');
+    state.communication_logs = commRows.map(r => ({
+      log_id: r.log_id,
+      guest_id_str: r.guest_id_str,
+      guest_name: r.guest_name,
+      communication_type: r.communication_type,
+      channel: r.channel,
+      status_info: r.status_info,
+      timestamp: r.timestamp,
+      staff_member: r.staff_member,
+      delivery_attempts: r.delivery_attempts,
+      failure_reason: r.failure_reason
+    }));
+
+    // For other arrays, keep defaults or let file-based seed populate them
+    console.log('[Database] Loaded guests:', state.guests.length, 'accounts:', state.guest_accounts.length, 'bookings:', state.bookings.length);
+  } catch (err) {
+    console.error('[Database] Error loading state from MySQL:', err);
+    throw err;
+  }
+}
+
 // Bootstrap DB
-export function initDB() {
+export async function initDB() {
+  if (useMySQL) {
+    try {
+      initMysqlPool();
+      await loadStateFromMySQL();
+      console.log('[Database] Initialized state from MySQL');
+      return;
+    } catch (err) {
+      console.error('[Database] Failed to initialize from MySQL, falling back to file state:', err);
+    }
+  }
+
   if (isVercel && !fs.existsSync(DB_FILE_PATH)) {
     const committedPath = path.join(process.cwd(), 'mock_mysql_data.json');
     if (fs.existsSync(committedPath)) {

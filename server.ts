@@ -17,7 +17,7 @@ const whatsappConfig = validateEnvironment();
 // Validate SendGrid configuration at startup
 const sendgridConfig = validateSendGridEnvironment();
 
-initDB();
+await initDB();
 
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
