@@ -681,6 +681,7 @@ export const dbOps = {
 
   getBookings: () => {
     if (isVercel) loadDBFromDisk();
+    console.log('[Diagnostics] dbOps.getBookings invoked (reloaded state on Vercel if applicable)');
     const sql = `
       SELECT b.*, g.full_name AS guest_name, g.email AS guest_email, g.mobile_number AS guest_phone,
              r.room_number, r.room_type, r.price_per_night
@@ -789,6 +790,7 @@ export const dbOps = {
     payment_method: "UPI" | "Credit Card" | "Debit Card" | "Net Banking" | "Cash";
   }) => {
     if (isVercel) loadDBFromDisk();
+    console.log('[Diagnostics] dbOps.createBookingTransaction invoked with:', JSON.stringify({ email: bookingData.email, room_id: bookingData.room_id, check_in: bookingData.check_in_date, check_out: bookingData.check_out_date }));
     const sqlTransactionStart = `START TRANSACTION;`;
     executeQuery(sqlTransactionStart, [], () => {});
 
@@ -870,6 +872,7 @@ export const dbOps = {
         created_at: new Date().toISOString()
       };
       state.bookings.push(b);
+      try { console.log('[Diagnostics] New booking pushed to state with id', b.booking_id); } catch(e) {}
       return b;
     });
 
@@ -931,6 +934,7 @@ export const dbOps = {
     executeQuery(sqlCommit, [], () => {});
     
     saveDB();
+    try { console.log('[Diagnostics] saveDB() called after booking creation, bookingId:', newBooking.booking_id); } catch(e) {}
     return { booking: newBooking, guestObject: guest, payment: newPayment };
   },
 

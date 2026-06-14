@@ -133,19 +133,24 @@ app.post('/api/bookings', (req, res) => {
   }
 
   try {
+    console.log('[Diagnostics] POST /api/bookings request body:', JSON.stringify(req.body));
     const result = dbOps.createBookingTransaction({
       full_name, email, mobile_number: formattedMobile, address: address || 'N/A', government_id,
       room_id: Number(room_id), check_in_date, check_out_date, payment_method
     });
     res.json(result);
+    try { console.log('[Diagnostics] Booking created result:', JSON.stringify({ bookingId: result?.booking?.booking_id, guestId: result?.guestObject?.guest_id })); } catch(e) {}
   } catch (err: any) {
+    console.error('[Diagnostics] Error creating booking:', err && err.message ? err.message : err);
     res.status(400).json({ error: err.message });
   }
 });
 
 // 4. Fetch Bookings
 app.get('/api/bookings', (req, res) => {
+  console.log('[Diagnostics] GET /api/bookings called');
   const bookings = dbOps.getBookings();
+  try { console.log(`[Diagnostics] GET /api/bookings returning ${bookings?.length || 0} bookings`); } catch (e) {}
   res.json({ bookings });
 });
 
