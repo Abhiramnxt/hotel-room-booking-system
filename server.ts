@@ -728,7 +728,10 @@ app.post('/api/auth/guest-accounts', (req, res) => {
 // User login endpoint
 app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body;
+  console.log('[Diagnostics] Login Attempt');
+  console.log('[Diagnostics] Username received:', username || '<missing>');
   if (!username || !password) {
+    console.log('[Diagnostics] Authentication Result: Failed - Missing Username or Password');
     return res.status(400).json({ error: "Username and Password required." });
   }
 
@@ -738,13 +741,20 @@ app.post('/api/auth/login', (req, res) => {
     acc.username.toLowerCase() === username.toLowerCase() || 
     acc.guest_id_str.toLowerCase() === username.toLowerCase()
   );
-
+  console.log('[Diagnostics] User Found In Guest Accounts:', !!guestAcc);
   if (guestAcc) {
+    console.log('[Diagnostics] Guest ID:', guestAcc.guest_id_str);
     if (!guestAcc.is_activated) {
+      console.log('[Diagnostics] Authentication Result: Failed - Guest account deactivated');
       return res.status(403).json({ error: "Access Restricted. Your guest account has been deactivated. Please contact Sai Nirvana Plaza Reception." });
     }
-    if (guestAcc.password_hash === password) {
+    const passwordMatchGuest = guestAcc.password_hash === password;
+    console.log('[Diagnostics] Password Match (guest):', passwordMatchGuest);
+    if (passwordMatchGuest) {
+      console.log('[Diagnostics] Authentication Result: Success - Guest login');
       return res.json({ success: true, role: 'Guest', account: guestAcc });
+    } else {
+      console.log('[Diagnostics] Authentication Result: Failed - Password mismatch (guest)');
     }
   }
 
@@ -757,31 +767,39 @@ app.post('/api/auth/login', (req, res) => {
         s.staff_name.toLowerCase() === username.toLowerCase()
       );
 
+  console.log('[Diagnostics] User Found In Staff List:', !!staffFound);
   if (staffFound && password === "Admin@123") {
     let assignedRole = 'Front Desk Staff';
     if (staffFound.department === 'Administration') assignedRole = 'Administrator';
     if (staffFound.department === 'Housekeeping') assignedRole = 'Housekeeping Staff';
     if (staffFound.role === 'Manager') assignedRole = 'Hotel Manager';
+    console.log('[Diagnostics] Authentication Result: Success - Staff login', assignedRole);
     return res.json({ success: true, role: assignedRole, staff: staffFound });
   }
 
   // 3. Simple development environment bypass credentials for convenience
   if (username.toLowerCase() === "sainirvanaplaza0533" && password === "admin") {
+    console.log('[Diagnostics] Authentication Result: Success - Dev bypass (admin)');
     return res.json({ success: true, role: 'Administrator' });
   }
   if (username.toLowerCase() === "sainirvanaplaza0533" && password === "reception") {
+    console.log('[Diagnostics] Authentication Result: Success - Dev bypass (reception)');
     return res.json({ success: true, role: 'Front Desk Staff' });
   }
   if (username.toLowerCase() === "sainirvanaplaza0533" && password === "manager") {
+    console.log('[Diagnostics] Authentication Result: Success - Dev bypass (manager)');
     return res.json({ success: true, role: 'Hotel Manager' });
   }
   if (username.toLowerCase() === "sainirvanaplaza0533" && password === "housekeeping") {
+    console.log('[Diagnostics] Authentication Result: Success - Dev bypass (housekeeping)');
     return res.json({ success: true, role: 'Housekeeping Staff' });
   }
   if (username.toLowerCase() === "sainirvanaplaza0533" && password === "operations") {
+    console.log('[Diagnostics] Authentication Result: Success - Dev bypass (operations)');
     return res.json({ success: true, role: 'Accounts Staff' });
   }
 
+  console.log('[Diagnostics] Authentication Result: Failed - Invalid Guest ID, Username or Password');
   res.status(401).json({ error: "Invalid Guest ID, Username or Password." });
 });
 
