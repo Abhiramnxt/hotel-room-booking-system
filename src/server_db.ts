@@ -680,6 +680,7 @@ export const dbOps = {
   },
 
   getBookings: () => {
+    if (isVercel) loadDBFromDisk();
     const sql = `
       SELECT b.*, g.full_name AS guest_name, g.email AS guest_email, g.mobile_number AS guest_phone,
              r.room_number, r.room_type, r.price_per_night
@@ -787,6 +788,7 @@ export const dbOps = {
     check_out_date: string;
     payment_method: "UPI" | "Credit Card" | "Debit Card" | "Net Banking" | "Cash";
   }) => {
+    if (isVercel) loadDBFromDisk();
     const sqlTransactionStart = `START TRANSACTION;`;
     executeQuery(sqlTransactionStart, [], () => {});
 
@@ -933,6 +935,7 @@ export const dbOps = {
   },
 
   archiveBooking: (bookingId: number, isArchived: boolean) => {
+    if (isVercel) loadDBFromDisk();
     const sql = `UPDATE bookings SET is_archived = ${isArchived ? 1 : 0} WHERE booking_id = ${bookingId};`;
     return executeQuery(sql, ['bookings'], () => {
       const found = state.bookings.find(b => b.booking_id === bookingId);
@@ -944,6 +947,7 @@ export const dbOps = {
   },
 
   updateBookingStatus: (bookingId: number, status: Booking['booking_status']) => {
+    if (isVercel) loadDBFromDisk();
     const sql = `UPDATE bookings SET booking_status = '${status}' WHERE booking_id = ${bookingId};`;
     return executeQuery(sql, ['bookings'], () => {
       const found = state.bookings.find(b => b.booking_id === bookingId);
