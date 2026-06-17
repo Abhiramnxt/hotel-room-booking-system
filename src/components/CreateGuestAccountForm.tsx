@@ -145,7 +145,6 @@ export function CreateGuestAccountForm({ currentRole = 'Front Desk Staff' }: Cre
   }, []);
 
   useEffect(() => {
-    setCommunicationLogs([]);
     if (selectedAccount) {
       fetchLogs(selectedAccount.guest_id_str);
       // If there are ongoing transmissions, start polling right away
@@ -556,24 +555,10 @@ export function CreateGuestAccountForm({ currentRole = 'Front Desk Staff' }: Cre
             </div>
 
             {/* Main Accounts Table */}
-            {isLoadingAccounts && accounts.length === 0 ? (
-              <div className="py-6 space-y-3 animate-pulse" id="accounts_registry_skeleton">
-                <div className="grid grid-cols-6 gap-3 border-b pb-2">
-                  <div className="h-4 bg-slate-200 rounded col-span-1"></div>
-                  <div className="h-4 bg-slate-200 rounded col-span-2"></div>
-                  <div className="h-4 bg-slate-200 rounded col-span-1"></div>
-                  <div className="h-4 bg-slate-200 rounded col-span-1"></div>
-                  <div className="h-4 bg-slate-200 rounded col-span-1"></div>
-                </div>
-                {[1, 2, 3, 4, 5].map((i) => (
-                  <div key={i} className="grid grid-cols-6 gap-3 py-2 border-b border-slate-100">
-                    <div className="h-3 bg-slate-100/80 rounded col-span-1"></div>
-                    <div className="h-3 bg-slate-100/80 rounded col-span-2"></div>
-                    <div className="h-3 bg-slate-100/80 rounded col-span-1"></div>
-                    <div className="h-3 bg-slate-100/80 rounded col-span-1"></div>
-                    <div className="h-3 bg-slate-100/80 rounded col-span-1"></div>
-                  </div>
-                ))}
+            {isLoadingAccounts ? (
+              <div className="py-24 text-center text-xs text-slate-400 space-y-3">
+                <Loader2 className="h-6 w-6 animate-spin mx-auto text-[#003366]" />
+                <p className="font-medium">Directing secure queries on MySQL Guest Registry Index...</p>
               </div>
             ) : filteredAccounts.length === 0 ? (
               <div className="py-24 text-center text-xs text-slate-400 space-y-2 border-2 border-dashed border-slate-100 rounded-xl">
@@ -853,24 +838,9 @@ export function CreateGuestAccountForm({ currentRole = 'Front Desk Staff' }: Cre
                   </div>
 
                   {logsLoading && communicationLogs.length === 0 ? (
-                    <div className="py-4 space-y-2 animate-pulse" id="telemetry_logs_skeleton">
-                      <div className="grid grid-cols-6 gap-2">
-                        <div className="h-3 bg-white/10 rounded col-span-1"></div>
-                        <div className="h-3 bg-white/10 rounded col-span-1"></div>
-                        <div className="h-3 bg-white/10 rounded col-span-2"></div>
-                        <div className="h-3 bg-white/10 rounded col-span-1"></div>
-                        <div className="h-3 bg-white/10 rounded col-span-1"></div>
-                      </div>
-                      <div className="h-[1px] bg-white/5 my-1"></div>
-                      {[1, 2, 3].map((i) => (
-                        <div key={i} className="grid grid-cols-6 gap-2 pt-1">
-                          <div className="h-3 bg-white/5 rounded col-span-1"></div>
-                          <div className="h-3 bg-white/5 rounded col-span-1"></div>
-                          <div className="h-3 bg-white/5 rounded col-span-2"></div>
-                          <div className="h-3 bg-white/5 rounded col-span-1"></div>
-                          <div className="h-3 bg-white/5 rounded col-span-1"></div>
-                        </div>
-                      ))}
+                    <div className="py-8 text-center text-[10px] text-slate-400 flex items-center justify-center gap-2">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[#F9D976]" />
+                      <span>Requesting carrier acknowledgment log indexes...</span>
                     </div>
                   ) : communicationLogs.length === 0 ? (
                     <div className="py-8 text-center text-[10px] text-slate-500">

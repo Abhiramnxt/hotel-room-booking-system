@@ -1003,18 +1003,10 @@ export function GuestDashboard({ loggedInGuest, onUpdateGuest }: GuestDashboardP
 
       {/* 3. DYNAMIC VIEWS CONTAINER */}
       <div className="min-h-[400px]">
-        {isLoadingStays && activeStays.length === 0 && stayHistory.length === 0 ? (
-          <div className="py-6 space-y-6 animate-pulse" id="guest_dashboard_skeleton">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="lg:col-span-2 space-y-4">
-                <div className="h-48 bg-slate-200 rounded-3xl"></div>
-                <div className="h-32 bg-slate-200 rounded-2xl"></div>
-              </div>
-              <div className="space-y-4">
-                <div className="h-40 bg-slate-200 rounded-2xl"></div>
-                <div className="h-40 bg-slate-200 rounded-2xl"></div>
-              </div>
-            </div>
+        {isLoadingStays ? (
+          <div className="py-20 text-center space-y-3">
+            <Loader2 className="h-10 w-10 animate-spin text-[#003366] mx-auto" />
+            <p className="text-xs text-slate-400 uppercase tracking-widest font-mono">Synchronizing MySQL central tables...</p>
           </div>
         ) : (
           <div className="animate-fade-in" id="dashboard_sub_view_panel">

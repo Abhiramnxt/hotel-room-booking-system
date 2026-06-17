@@ -307,13 +307,9 @@ export function BookingModal({ room, checkInDate, checkOutDate, onClose, onBooki
 
             {/* AI SUGGESTION IF ACTIVE AND LOADING */}
             {isLoadingAi && (
-              <div className="bg-[#001f3f]/50 p-4 rounded-xl border border-[#D4AF37]/20 text-xs space-y-3 animate-pulse" id="ai_loading_skeleton">
-                <div className="flex items-center gap-1.5 text-[#F9D976]/65 font-bold uppercase text-[9px] tracking-wider">
-                  <Sparkles className="h-4 w-4 text-[#F9D976]/65" />
-                  <span>Sai Guest Copilot is thinking...</span>
-                </div>
-                <div className="h-3 bg-white/10 rounded w-5/6"></div>
-                <div className="h-3 bg-white/10 rounded w-2/3"></div>
+              <div className="bg-[#001f3f]/50 p-4 rounded-xl border border-dashed border-[#D4AF37]/30 text-center text-xs text-slate-300 space-y-2">
+                <Sparkles className="h-4 w-4 text-[#F9D976] animate-spin mx-auto" />
+                <p>Generating premium upgrade suggestions via Gemini AI...</p>
               </div>
             )}
 

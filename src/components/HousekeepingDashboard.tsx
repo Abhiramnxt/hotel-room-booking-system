@@ -27,8 +27,8 @@ export function HousekeepingDashboard() {
   const [activeFilter, setActiveFilter] = useState<'All' | 'Food Orders' | 'Room Service Requests' | 'Issue Reports' | 'Maintenance Requests' | 'Guest Complaints' | 'Housekeeping Requests' | 'Completed' | 'Pending'>('All');
   const [searchQuery, setSearchQuery] = useState('');
 
-  const fetchAllRequests = async (silent = false) => {
-    if (!silent) setIsLoading(true);
+  const fetchAllRequests = async () => {
+    setIsLoading(true);
     try {
       // Fetch datasets in parallel
       const [hkRes, rsRes, cpRes, bookingsRes] = await Promise.all([
@@ -112,7 +112,7 @@ export function HousekeepingDashboard() {
     } catch (e) {
       console.warn("Error loading unified housekeeping dashboard data:", e);
     } finally {
-      if (!silent) setIsLoading(false);
+      setIsLoading(false);
     }
   };
 
@@ -163,7 +163,7 @@ export function HousekeepingDashboard() {
       });
       if (res.ok) {
         playSound('success');
-        fetchAllRequests(true);
+        fetchAllRequests();
         // Immediately notify GuestDashboard of the room-service/complaint status change
         broadcastServiceStatusChange();
       }
@@ -523,7 +523,7 @@ export function HousekeepingDashboard() {
           </div>
 
           <button
-            onClick={() => fetchAllRequests(true)}
+            onClick={fetchAllRequests}
             disabled={isLoading}
             className="shrink-0 bg-white/10 hover:bg-white/20 text-[#F9D976] hover:text-[#fff] text-xs font-bold px-4 py-2.5 rounded-xl border border-white/15 transition-all flex items-center gap-1.5 cursor-pointer uppercase shadow"
           >
@@ -604,25 +604,10 @@ export function HousekeepingDashboard() {
 
       </div>
 
-      {/* 3. MAIN UNIFIED REQUESTS LIST */}
-      {isLoading && unifiedRequests.length === 0 ? (
-        <div className="bg-white rounded-3xl border border-slate-200/80 p-6 space-y-3 animate-pulse" id="housekeeping_ledger_skeleton">
-          <div className="grid grid-cols-6 gap-3 border-b pb-2">
-            <div className="h-4 bg-slate-200 rounded col-span-1"></div>
-            <div className="h-4 bg-slate-200 rounded col-span-2"></div>
-            <div className="h-4 bg-slate-200 rounded col-span-1"></div>
-            <div className="h-4 bg-slate-200 rounded col-span-1"></div>
-            <div className="h-4 bg-slate-200 rounded col-span-1"></div>
-          </div>
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="grid grid-cols-6 gap-3 py-2 border-b border-slate-100">
-              <div className="h-3 bg-slate-100/80 rounded col-span-1"></div>
-              <div className="h-3 bg-slate-100/80 rounded col-span-2"></div>
-              <div className="h-3 bg-slate-100/80 rounded col-span-1"></div>
-              <div className="h-3 bg-slate-100/80 rounded col-span-1"></div>
-              <div className="h-3 bg-slate-100/80 rounded col-span-1"></div>
-            </div>
-          ))}
+      {isLoading ? (
+        <div className="bg-white rounded-3xl border border-slate-200/80 p-20 text-center text-xs text-slate-450 shadow-sm">
+          <RefreshCw className="h-8 w-8 animate-spin text-[#003366] mx-auto mb-3" />
+          <p className="font-semibold font-heading uppercase text-[10px] tracking-wider text-slate-700">Consolidating active queues...</p>
         </div>
       ) : filteredRequests.length === 0 ? (
         <div className="bg-white rounded-3xl border border-slate-200/80 p-16 text-center text-xs text-slate-450 shadow-sm space-y-3">
