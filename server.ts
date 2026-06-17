@@ -9,15 +9,28 @@ import path from 'path';
 import {GoogleGenAI} from '@google/genai';
 import {initDB, dbOps} from './src/server_db.js';
 import { validateEnvironment, sendWhatsAppMessage, delay, formatIndianPhoneNumber } from './src/utils/whatsappService.js';
-import { validateSendGridEnvironment, sendEmail } from './src/utils/sendgridService.js';
+import { validateNodemailerEnvironment, sendEmail } from './src/utils/nodemailerService.js';
 
 // Validate WhatsApp configuration at startup
 const whatsappConfig = validateEnvironment();
 
-// Validate SendGrid configuration at startup
-const sendgridConfig = validateSendGridEnvironment();
+// Validate Nodemailer configuration at startup
+const nodemailerConfig = validateNodemailerEnvironment();
 
-await initDB();
+function getFormattedDateString(d: any): string {
+  if (!d) return '';
+  if (d instanceof Date) {
+    return d.toISOString().split('T')[0];
+  }
+  if (typeof d === 'string') {
+    if (d.includes('T')) return d.split('T')[0];
+    if (d.includes(' ')) return d.split(' ')[0];
+    return d;
+  }
+  return String(d);
+}
+
+initDB().catch(console.error);
 
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
@@ -70,7 +83,7 @@ app.post('/api/database/logs/clear', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-app.post('/api/database/query', (req, res) => {
+app.post('/api/database/query', async (req, res) => {
   const { query } = req.body;
   if (!query || typeof query !== 'string') {
     return res.status(400).json({ error: "No SQL query provided." });
@@ -80,31 +93,31 @@ app.post('/api/database/query', (req, res) => {
   const lowerQuery = query.toLowerCase().trim();
   try {
     if (lowerQuery.startsWith('select * from rooms') || lowerQuery.startsWith('select * from rooms;')) {
-      const data = dbOps.getRooms();
+      const data = await dbOps.getRooms();
       return res.json({ columns: ['room_id', 'room_number', 'room_type', 'capacity', 'price_per_night', 'room_status'], rows: data });
     }
     if (lowerQuery.startsWith('select * from guests') || lowerQuery.startsWith('select * from guests;')) {
-      const data = dbOps.getGuests();
+      const data = await dbOps.getGuests();
       return res.json({ columns: ['guest_id', 'full_name', 'email', 'mobile_number', 'address', 'government_id'], rows: data });
     }
     if (lowerQuery.startsWith('select * from bookings') || lowerQuery.startsWith('select * from bookings;')) {
-      const data = dbOps.getBookings();
+      const data = await dbOps.getBookings();
       return res.json({ columns: ['booking_id', 'guest_id', 'room_id', 'check_in_date', 'check_out_date', 'booking_status', 'booking_source'], rows: data });
     }
     if (lowerQuery.startsWith('select * from payments') || lowerQuery.startsWith('select * from payments;')) {
-      const data = dbOps.getPayments();
+      const data = await dbOps.getPayments();
       return res.json({ columns: ['payment_id', 'booking_id', 'amount', 'gst_amount', 'payment_method', 'payment_status'], rows: data });
     }
     if (lowerQuery.startsWith('select * from staff') || lowerQuery.startsWith('select * from staff;')) {
-      const data = dbOps.getStaff();
+      const data = await dbOps.getStaff();
       return res.json({ columns: ['staff_id', 'staff_name', 'department', 'role', 'email', 'phone_number'], rows: data });
     }
     if (lowerQuery.startsWith('select * from feedback') || lowerQuery.startsWith('select * from feedback;')) {
-      const data = dbOps.getFeedback();
+      const data = await dbOps.getFeedback();
       return res.json({ columns: ['feedback_id', 'guest_id', 'rating', 'comments'], rows: data });
     }
     if (lowerQuery.startsWith('select * from complaints') || lowerQuery.startsWith('select * from complaints;')) {
-      const data = dbOps.getComplaints();
+      const data = await dbOps.getComplaints();
       return res.json({ columns: ['complaint_id', 'guest_id', 'complaint_category', 'complaint_description', 'priority_level', 'complaint_status'], rows: data });
     }
     return res.status(400).json({ error: "Unsupported query simulation. Supported: SELECT * FROM rooms | guests | bookings | payments | staff | feedback | complaints" });
@@ -114,18 +127,34 @@ app.post('/api/database/query', (req, res) => {
 });
 
 // 2. Fetch Rooms
-app.get('/api/rooms', (req, res) => {
-  const rooms = dbOps.getRooms();
+app.get('/api/rooms', async (req, res) => {
+  const rooms = await dbOps.getRooms();
   res.json({ rooms });
 });
 
-app.get('/api/room-availability', (req, res) => {
-  const availability = dbOps.getRoomAvailability();
+app.post('/api/rooms/:id/reset-clean', async (req, res) => {
+  const roomId = Number(req.params.id);
+  const { staffMember } = req.body;
+  if (!roomId || isNaN(roomId)) {
+    return res.status(400).json({ error: "Invalid Room ID." });
+  }
+
+  try {
+    const updatedRoom = await dbOps.resetRoomCleanStatus(roomId, staffMember || 'Front Desk Staff');
+    res.json({ success: true, room: updatedRoom });
+  } catch (err: any) {
+    console.error(`Error resetting room clean status for room ${roomId}:`, err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/room-availability', async (req, res) => {
+  const availability = await dbOps.getRoomAvailability();
   res.json({ availability });
 });
 
 // 3. Submit Booking with Transaction
-app.post('/api/bookings', (req, res) => {
+app.post('/api/bookings', async (req, res) => {
   const {
     full_name, email, mobile_number, address, government_id,
     room_id, check_in_date, check_out_date, payment_method
@@ -143,7 +172,7 @@ app.post('/api/bookings', (req, res) => {
 
   try {
     console.log('[Diagnostics] POST /api/bookings request body:', JSON.stringify(req.body));
-    const result = dbOps.createBookingTransaction({
+    const result = await dbOps.createBookingTransaction({
       full_name, email, mobile_number: formattedMobile, address: address || 'N/A', government_id,
       room_id: Number(room_id), check_in_date, check_out_date, payment_method
     });
@@ -156,31 +185,41 @@ app.post('/api/bookings', (req, res) => {
 });
 
 // 4. Fetch Bookings
-app.get('/api/bookings', (req, res) => {
-  console.log('[Diagnostics] GET /api/bookings called');
-  console.log('[Diagnostics] GET /api/bookings conditional headers:', {
-    ifNoneMatch: req.headers['if-none-match'],
-    ifModifiedSince: req.headers['if-modified-since']
-  });
-  const bookings = dbOps.getBookings();
-  try { console.log(`[Diagnostics] GET /api/bookings returning ${bookings?.length || 0} bookings`); } catch (e) {}
+app.get('/api/bookings', async (req, res) => {
+  console.log('GET /api/bookings called');
+  const { email } = req.query;
+  let bookings = await dbOps.getBookings();
+  if (email && typeof email === 'string') {
+    bookings = bookings.filter(b => b.guest_email?.toLowerCase() === email.toLowerCase());
+  }
+  console.log(`GET /api/bookings returning ${bookings.length} bookings`);
   res.json({ bookings });
 });
 
+// Fetch Active Stays
+app.get('/api/active-stays', async (req, res) => {
+  try {
+    const stays = await dbOps.getActiveStays();
+    res.json({ success: true, activeStays: stays });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Fetch Payments
-app.get('/api/payments', (req, res) => {
-  const payments = dbOps.getPayments();
+app.get('/api/payments', async (req, res) => {
+  const payments = await dbOps.getPayments();
   res.json({ payments });
 });
 
 // Update Payment Status
-app.put('/api/payments/:id/status', (req, res) => {
+app.put('/api/payments/:id/status', async (req, res) => {
   const paymentId = Number(req.params.id);
   const { status } = req.body;
   if (!status) return res.status(400).json({ error: "Status required." });
 
   try {
-    const updated = (dbOps as any).updatePaymentStatus(paymentId, status);
+    const updated = await (dbOps as any).updatePaymentStatus(paymentId, status);
     res.json({ success: true, payment: updated });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -188,13 +227,13 @@ app.put('/api/payments/:id/status', (req, res) => {
 });
 
 // Update Booking Status
-app.put('/api/bookings/:id/status', (req, res) => {
+app.put('/api/bookings/:id/status', async (req, res) => {
   const bookingId = Number(req.params.id);
   const { status } = req.body;
   if (!status) return res.status(400).json({ error: "Status required." });
 
   try {
-    const updated = dbOps.updateBookingStatus(bookingId, status);
+    const updated = await dbOps.updateBookingStatus(bookingId, status);
     res.json({ success: true, booking: updated });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -202,14 +241,14 @@ app.put('/api/bookings/:id/status', (req, res) => {
 });
 
 // Archive Bookings (bulk)
-app.put('/api/bookings/archive', (req, res) => {
+app.put('/api/bookings/archive', async (req, res) => {
   const { bookingIds, is_archived } = req.body;
   if (!Array.isArray(bookingIds)) {
     return res.status(400).json({ error: "bookingIds array is required." });
   }
 
   try {
-    const updated = bookingIds.map(id => dbOps.archiveBooking(Number(id), !!is_archived));
+    const updated = await Promise.all(bookingIds.map(id => dbOps.archiveBooking(Number(id), !!is_archived)));
     res.json({ success: true, bookings: updated });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -217,18 +256,18 @@ app.put('/api/bookings/archive', (req, res) => {
 });
 
 // 5. Housekeeping
-app.get('/api/housekeeping', (req, res) => {
-  const tasks = dbOps.getHousekeeping();
+app.get('/api/housekeeping', async (req, res) => {
+  const tasks = await dbOps.getHousekeeping();
   res.json({ tasks });
 });
 
-app.put('/api/housekeeping/:id/status', (req, res) => {
+app.put('/api/housekeeping/:id/status', async (req, res) => {
   const taskId = Number(req.params.id);
   const { status } = req.body;
   if (!status) return res.status(400).json({ error: "Status required." });
 
   try {
-    const updated = dbOps.updateHousekeepingTask(taskId, status);
+    const updated = await dbOps.updateHousekeepingTask(taskId, status);
     res.json({ success: true, task: updated });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -236,30 +275,35 @@ app.put('/api/housekeeping/:id/status', (req, res) => {
 });
 
 // 6. Room Service
-app.get('/api/room-service', (req, res) => {
-  const requests = dbOps.getRoomServiceRequests();
+app.get('/api/room-service', async (req, res) => {
+  const requests = await dbOps.getRoomServiceRequests();
   res.json({ requests });
 });
 
-app.post('/api/room-service', (req, res) => {
-  const { email, request_type } = req.body;
+app.post('/api/room-service', async (req, res) => {
+  const { email, request_type, room_id, booking_id } = req.body;
   if (!email || !request_type) return res.status(400).json({ error: "Missing email or request_type." });
 
   try {
-    const request = dbOps.createRoomServiceRequest({ email, request_type });
+    const request = await dbOps.createRoomServiceRequest({
+      email,
+      request_type,
+      room_id: room_id ? Number(room_id) : undefined,
+      booking_id: booking_id ? Number(booking_id) : undefined
+    });
     res.json({ success: true, request });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
 });
 
-app.put('/api/room-service/:id/status', (req, res) => {
+app.put('/api/room-service/:id/status', async (req, res) => {
   const requestId = Number(req.params.id);
   const { status } = req.body;
   if (!status) return res.status(400).json({ error: "Status required." });
 
   try {
-    const updated = dbOps.updateRoomServiceStatus(requestId, status);
+    const updated = await dbOps.updateRoomServiceStatus(requestId, status);
     res.json({ success: true, request: updated });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -267,14 +311,14 @@ app.put('/api/room-service/:id/status', (req, res) => {
 });
 
 // 7. Complaints & Feedback
-app.get('/api/complaints', (req, res) => {
-  const complaints = dbOps.getComplaints();
+app.get('/api/complaints', async (req, res) => {
+  const complaints = await dbOps.getComplaints();
   res.json({ complaints });
 });
 
 // POST Complaint - Handles AI-suggested priority via Gemini
 app.post('/api/complaints', async (req, res) => {
-  const { email, complaint_category, complaint_description } = req.body;
+  const { email, complaint_category, complaint_description, room_id, booking_id } = req.body;
   if (!email || !complaint_category || !complaint_description) {
     return res.status(400).json({ error: "Missing required fields." });
   }
@@ -290,7 +334,7 @@ app.post('/api/complaints', async (req, res) => {
       const prompt = `Analyze this hotel guest complaint and determine priority. Category: ${complaint_category}. Description: "${complaint_description}". State ONLY the priority as exactly "Low", "Medium", "High", or "Critical", followed by a brief 1-sentence reasoning. Use the format: PRIORITY: [value] | REASON: [reason]`;
       
       const response = await aiClient.models.generateContent({
-        model: 'gemini-3.5-flash',
+        model: 'gemini-2.5-flash',
         contents: prompt
       });
 
@@ -337,8 +381,13 @@ app.post('/api/complaints', async (req, res) => {
   }
 
   try {
-    const complaintObj = dbOps.submitComplaint({
-      email, complaint_category, complaint_description, priority_level: priority
+    const complaintObj = await dbOps.submitComplaint({
+      email,
+      complaint_category,
+      complaint_description,
+      priority_level: priority,
+      room_id: room_id ? Number(room_id) : undefined,
+      booking_id: booking_id ? Number(booking_id) : undefined
     });
     res.json({
       success: true,
@@ -350,13 +399,13 @@ app.post('/api/complaints', async (req, res) => {
   }
 });
 
-app.put('/api/complaints/:id/status', (req, res) => {
+app.put('/api/complaints/:id/status', async (req, res) => {
   const complaintId = Number(req.params.id);
   const { status } = req.body;
   if (!status) return res.status(400).json({ error: "Status required." });
 
   try {
-    const updated = dbOps.updateComplaintStatus(complaintId, status);
+    const updated = await dbOps.updateComplaintStatus(complaintId, status);
     res.json({ success: true, complaint: updated });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -364,19 +413,19 @@ app.put('/api/complaints/:id/status', (req, res) => {
 });
 
 // Feedback APIs
-app.get('/api/feedback', (req, res) => {
-  const feedback = dbOps.getFeedback();
+app.get('/api/feedback', async (req, res) => {
+  const feedback = await dbOps.getFeedback();
   res.json({ feedback });
 });
 
-app.post('/api/feedback', (req, res) => {
+app.post('/api/feedback', async (req, res) => {
   const { guest_name, email, rating, comments } = req.body;
   if (!guest_name || !email || !rating || !comments) {
     return res.status(400).json({ error: "Missing feedback properties." });
   }
 
   try {
-    const feedbackObj = dbOps.submitFeedback({ guest_name, email, rating: Number(rating), comments });
+    const feedbackObj = await dbOps.submitFeedback({ guest_name, email, rating: Number(rating), comments });
     res.json({ success: true, feedback: feedbackObj });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -384,12 +433,12 @@ app.post('/api/feedback', (req, res) => {
 });
 
 // 8. Corporate Bookings
-app.get('/api/corporate', (req, res) => {
-  const corporate = dbOps.getCorporate();
+app.get('/api/corporate', async (req, res) => {
+  const corporate = await dbOps.getCorporate();
   res.json({ corporate });
 });
 
-app.post('/api/corporate', (req, res) => {
+app.post('/api/corporate', async (req, res) => {
   const { company_name, contact_person, contact_email, contact_phone, number_of_rooms, booking_dates } = req.body;
   if (!company_name || !contact_person || !contact_email || !contact_phone || !number_of_rooms || !booking_dates) {
     return res.status(400).json({ error: "Missing corporate details." });
@@ -402,7 +451,7 @@ app.post('/api/corporate', (req, res) => {
   }
 
   try {
-    const corp = dbOps.submitCorporateBooking({
+    const corp = await dbOps.submitCorporateBooking({
       company_name, contact_person, contact_email, contact_phone: formattedPhone, number_of_rooms: Number(number_of_rooms), booking_dates
     });
     res.json({ success: true, corporate: corp });
@@ -411,13 +460,13 @@ app.post('/api/corporate', (req, res) => {
   }
 });
 
-app.put('/api/corporate/:id/status', (req, res) => {
+app.put('/api/corporate/:id/status', async (req, res) => {
   const corpId = Number(req.params.id);
   const { status } = req.body;
   if (!status) return res.status(400).json({ error: "Status required." });
 
   try {
-    const updated = dbOps.updateCorporateBooking(corpId, status);
+    const updated = await dbOps.updateCorporateBooking(corpId, status);
     res.json({ success: true, corporate: updated });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -425,26 +474,26 @@ app.put('/api/corporate/:id/status', (req, res) => {
 });
 
 // 9. Analytics Dashboard Calculations (INR Rupiah Metrics)
-app.get('/api/analytics', (req, res) => {
-  const rooms = dbOps.getRooms();
-  const bookings = dbOps.getBookings();
-  const payments = dbOps.getPayments();
-  const feedback = dbOps.getFeedback();
-  const complaints = dbOps.getComplaints();
+app.get('/api/analytics', async (req, res) => {
+  const rooms = await dbOps.getRooms();
+  const bookings = await dbOps.getBookings();
+  const payments = await dbOps.getPayments();
+  const feedback = await dbOps.getFeedback();
+  const complaints = await dbOps.getComplaints();
 
   // Financial Stats
   const totalBookings = bookings.length;
   const todayDate = new Date().toISOString().split('T')[0];
-  const todayBookings = bookings.filter(b => b.created_at.startsWith(todayDate)).length;
+  const todayBookings = bookings.filter(b => b.created_at && getFormattedDateString(b.created_at) === todayDate).length;
   
   // Total Revenue
   const totalRevenue = payments
     .filter(p => p.payment_status === 'Paid')
-    .reduce((sum, p) => sum + p.amount, 0);
+    .reduce((sum, p) => sum + Number(p.amount), 0);
 
   const gstCollected = payments
     .filter(p => p.payment_status === 'Paid')
-    .reduce((sum, p) => sum + p.gst_amount, 0);
+    .reduce((sum, p) => sum + Number(p.gst_amount), 0);
 
   // Simple in-memory aggregates for daily, weekly, monthly and annual
   // Bootstrapping static reports inside node to ensure consistent telemetry charts
@@ -471,6 +520,8 @@ app.get('/api/analytics', (req, res) => {
     ? Math.round((resolvedComplaints / totalComplaints) * 100) 
     : 100;
 
+  const monthlyTrend = await dbOps.getMonthlyRevenueTrend();
+
   res.json({
     metrics: {
       totalBookings,
@@ -495,23 +546,16 @@ app.get('/api/analytics', (req, res) => {
       { name: 'Presidential Suite', occupancy: 40, revenue: Math.round(totalRevenue * 0.15) },
       { name: 'Standard Room', occupancy: 90, revenue: Math.round(totalRevenue * 0.05) }
     ],
-    monthlyTrend: [
-      { name: 'Jan', revenue: 120000, bookings: 45 },
-      { name: 'Feb', revenue: 145000, bookings: 50 },
-      { name: 'Mar', revenue: 180000, bookings: 62 },
-      { name: 'Apr', revenue: 210000, bookings: 75 },
-      { name: 'May', revenue: 285000, bookings: 98 },
-      { name: 'Jun', revenue: Math.round(totalRevenue), bookings: Math.max(12, totalBookings) }
-    ]
+    monthlyTrend
   });
 });
 
-// 10. AI Predictive & Summary Endpoints using Gemini-3.5-flash
+// 10. AI Predictive & Summary Endpoints using Gemini-2.5-flash
 app.post('/api/ai/suggest-upgrade', async (req, res) => {
   const { current_room_id, check_in_date, check_out_date } = req.body;
   if (!current_room_id) return res.status(400).json({ error: "Missing current_room_id." });
 
-  const rooms = dbOps.getRooms();
+  const rooms = await dbOps.getRooms();
   const currentRoom = rooms.find(r => r.room_id === Number(current_room_id));
   if (!currentRoom) return res.status(404).json({ error: "Current room not found." });
 
@@ -531,7 +575,7 @@ app.post('/api/ai/suggest-upgrade', async (req, res) => {
       const prompt = `You are an elite hospitality pricing expert at Sai Nirvana Plaza. Recommend an upgrade from a ${currentRoom.room_type} (room ${currentRoom.room_number}, ₹${currentRoom.price_per_night}/night) to a ${bestCandidate.room_type} (room ${bestCandidate.room_number}, ₹${bestCandidate.price_per_night}/night). The stay dates are from ${check_in_date} to ${check_out_date}. Highlight premium amenities: ${bestCandidate.amenities.join(', ')}. Generate a highly persuasive, friendly, elite 2-sentence sales upgrade greeting in corporate elegant tone offering a 10% discount on the upgrade difference price. Mention GST is applicable in INR.`;
       
       const response = await aiClient.models.generateContent({
-        model: 'gemini-3.5-flash',
+        model: 'gemini-2.5-flash',
         contents: prompt
       });
       recommendationText = response.text || '';
@@ -575,7 +619,7 @@ app.post('/api/ai/booking-summary', async (req, res) => {
       const prompt = `Generate a modern, highly professional booking confirmation summary and an automated WhatsApp Business confirmation message for guest ${guest_name} staying in room ${room_number || 'TBA'} (${room_type}) from ${check_in} to ${check_out}. The total stays cost is ${total_paid} using ${payment_method || 'UPI'}. Mention welcome drinks upon arrival. Format clearly using Markdown. Use India numbers and GST inclusive lines. Prefix the WhatsApp template with 'WHATSAPP_START:' and end with 'WHATSAPP_END:'`;
       
       const response = await aiClient.models.generateContent({
-        model: 'gemini-3.5-flash',
+        model: 'gemini-2.5-flash',
         contents: prompt
       });
 
@@ -665,7 +709,7 @@ Guidelines:
       contents.push({ role: 'user', parts: [{ text: message }] });
 
       const response = await aiClient.models.generateContent({
-        model: 'gemini-3.5-flash',
+        model: 'gemini-2.5-flash',
         contents: contents,
         config: {
           systemInstruction: systemInstruction,
@@ -708,9 +752,9 @@ Guidelines:
 // Authentication & Guest Access Control Endpoints
 
 // Get created guest accounts lists (For reception & admin dashboard status check)
-app.get('/api/auth/guest-accounts', (req, res) => {
+app.get('/api/auth/guest-accounts', async (req, res) => {
   try {
-    const list = dbOps.getGuestAccounts();
+    const list = await dbOps.getGuestAccounts();
     res.json({ success: true, accounts: list });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -718,9 +762,11 @@ app.get('/api/auth/guest-accounts', (req, res) => {
 });
 
 // Create unique Guest Access Account (System automatically generates guest_id_str, username, password_hash)
-app.post('/api/auth/guest-accounts', (req, res) => {
-  const { full_name, mobile_number, email, stay_duration, room_preference } = req.body;
+app.post('/api/auth/guest-accounts', async (req, res) => {
+  const { full_name, mobile_number, email, stay_duration } = req.body;
+  console.log('[Diagnostics] POST /api/auth/guest-accounts request body:', req.body);
   if (!full_name || !mobile_number || !email) {
+    console.warn('[Diagnostics] Missing required guest applicant fields');
     return res.status(400).json({ error: "Missing required booking applicant properties." });
   }
   let formattedMobile = mobile_number;
@@ -729,17 +775,20 @@ app.post('/api/auth/guest-accounts', (req, res) => {
     formattedMobile = formatted;
   }
   try {
-    const newAcc = dbOps.createGuestAccount({
-      full_name, mobile_number: formattedMobile, email, stay_duration: stay_duration || '2 Nights', room_preference: room_preference || 'Standard'
+    console.log('[Diagnostics] Initiating dbOps.createGuestAccount');
+    const newAcc = await dbOps.createGuestAccount({
+      full_name, mobile_number: formattedMobile, email, stay_duration: stay_duration || '2 Nights'
     });
+    console.log('[Diagnostics] dbOps.createGuestAccount succeeded:', newAcc);
     res.json({ success: true, account: newAcc });
   } catch (err: any) {
+    console.error('[Diagnostics] dbOps.createGuestAccount threw an exception:', err.message || err);
     res.status(400).json({ error: err.message });
   }
 });
 
 // User login endpoint
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
   console.log('[Diagnostics] Login Attempt');
   console.log('[Diagnostics] Username received:', username || '<missing>');
@@ -749,7 +798,7 @@ app.post('/api/auth/login', (req, res) => {
   }
 
   // 1. Look in Guest accounts
-  const accounts = dbOps.getGuestAccounts();
+  const accounts = await dbOps.getGuestAccounts();
   const guestAcc = accounts.find(acc => 
     acc.username.toLowerCase() === username.toLowerCase() || 
     acc.guest_id_str.toLowerCase() === username.toLowerCase()
@@ -772,7 +821,7 @@ app.post('/api/auth/login', (req, res) => {
   }
 
   // 2. Look in staff list
-  const staffList = dbOps.getStaff();
+  const staffList = await dbOps.getStaff();
   const staffFound = (username.toLowerCase() === "sainirvanaplaza0533")
     ? staffList.find(s => s.role === 'Manager')
     : staffList.find(s => 
@@ -783,7 +832,7 @@ app.post('/api/auth/login', (req, res) => {
   console.log('[Diagnostics] User Found In Staff List:', !!staffFound);
   if (staffFound && password === "Admin@123") {
     let assignedRole = 'Front Desk Staff';
-    if (staffFound.department === 'Administration') assignedRole = 'Administrator';
+    if (staffFound.department === 'Administration') assignedRole = 'Hotel Manager';
     if (staffFound.department === 'Housekeeping') assignedRole = 'Housekeeping Staff';
     if (staffFound.role === 'Manager') assignedRole = 'Hotel Manager';
     console.log('[Diagnostics] Authentication Result: Success - Staff login', assignedRole);
@@ -792,8 +841,8 @@ app.post('/api/auth/login', (req, res) => {
 
   // 3. Simple development environment bypass credentials for convenience
   if (username.toLowerCase() === "sainirvanaplaza0533" && password === "admin") {
-    console.log('[Diagnostics] Authentication Result: Success - Dev bypass (admin)');
-    return res.json({ success: true, role: 'Administrator' });
+    console.log('[Diagnostics] Authentication Result: Success - Dev bypass (admin → manager)');
+    return res.json({ success: true, role: 'Hotel Manager' });
   }
   if (username.toLowerCase() === "sainirvanaplaza0533" && password === "reception") {
     console.log('[Diagnostics] Authentication Result: Success - Dev bypass (reception)');
@@ -817,13 +866,13 @@ app.post('/api/auth/login', (req, res) => {
 });
 
 // Change Password on first login
-app.post('/api/auth/change-password', (req, res) => {
+app.post('/api/auth/change-password', async (req, res) => {
   const { username, new_password } = req.body;
   if (!username || !new_password) {
     return res.status(400).json({ error: "Username and password are required." });
   }
   try {
-    const updated = dbOps.updateGuestAccountPassword(username, new_password);
+    const updated = await dbOps.updateGuestAccountPassword(username, new_password);
     res.json({ success: true, account: updated });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -831,11 +880,11 @@ app.post('/api/auth/change-password', (req, res) => {
 });
 
 // Toggle Account Status activation / deactivation
-app.post('/api/auth/toggle-status', (req, res) => {
+app.post('/api/auth/toggle-status', async (req, res) => {
   const { account_id } = req.body;
   if (!account_id) return res.status(400).json({ error: "Missing account_id." });
   try {
-    const updated = dbOps.toggleGuestAccountActivation(Number(account_id));
+    const updated = await dbOps.toggleGuestAccountActivation(Number(account_id));
     res.json({ success: true, account: updated });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -843,10 +892,10 @@ app.post('/api/auth/toggle-status', (req, res) => {
 });
 
 // Delete Guest Access Account
-app.delete('/api/auth/guest-accounts/:id', (req, res) => {
+app.delete('/api/auth/guest-accounts/:id', async (req, res) => {
   const accountId = Number(req.params.id);
   try {
-    dbOps.deleteGuestAccount(accountId);
+    await dbOps.deleteGuestAccount(accountId);
     res.json({ success: true });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -854,10 +903,10 @@ app.delete('/api/auth/guest-accounts/:id', (req, res) => {
 });
 
 // Fetch all or guest-specific communication delivery logs
-app.get('/api/auth/communication-logs', (req, res) => {
+app.get('/api/auth/communication-logs', async (req, res) => {
   const { guest_id_str, guest_id, booking_id, log_id } = req.query;
   try {
-    const logs = dbOps.getCommunicationLogs({
+    const logs = await dbOps.getCommunicationLogs({
       guest_id_str: guest_id_str as string,
       guest_id: guest_id as string,
       booking_id: booking_id as string,
@@ -870,18 +919,18 @@ app.get('/api/auth/communication-logs', (req, res) => {
 });
 
 // Regenerate Guest Access Account password (forces prompt/password reset)
-app.post('/api/auth/regenerate-credentials', (req, res) => {
+app.post('/api/auth/regenerate-credentials', async (req, res) => {
   const { account_id } = req.body;
   if (!account_id) return res.status(400).json({ error: "account_id is required." });
 
   try {
-    const list = dbOps.getGuestAccounts();
+    const list = await dbOps.getGuestAccounts();
     const acc = list.find(a => a.account_id === Number(account_id));
     if (!acc) return res.status(404).json({ error: "Guest security credentials not registered." });
 
     // Instatiate new temporary key Passcode
     const nextPassword = `Temp@${Math.floor(100 + Math.random() * 900)}`;
-    const updated = dbOps.updateGuestAccountPassword(acc.username, nextPassword);
+    const updated = await dbOps.updateGuestAccountPassword(acc.username, nextPassword);
     
     // Set changed back to 0 so they must change it again on next login
     updated.first_login_password_changed = false;
@@ -950,7 +999,7 @@ async function runWhatsAppDispatch(
 ====================================`);
 
   if (result.success) {
-    dbOps.updateCommunicationLogStatus(
+    await dbOps.updateCommunicationLogStatus(
       logId,
       '🟢 Delivered Successfully',
       1,
@@ -961,7 +1010,7 @@ async function runWhatsAppDispatch(
     );
     return true;
   } else {
-    dbOps.updateCommunicationLogStatus(
+    await dbOps.updateCommunicationLogStatus(
       logId,
       '🔴 Delivery Failed',
       1,
@@ -977,7 +1026,7 @@ async function runWhatsAppDispatch(
 async function runEmailDispatch(logId: number, recipientEmail: string, message: string): Promise<boolean> {
   let subject = "Sai Nirvana Plaza - Update";
   try {
-    const logs = dbOps.getCommunicationLogs();
+    const logs = await dbOps.getCommunicationLogs();
     const matchedLog = logs.find(l => l.log_id === logId);
     if (matchedLog && matchedLog.communication_type) {
       subject = `Sai Nirvana Plaza - ${matchedLog.communication_type}`;
@@ -986,10 +1035,10 @@ async function runEmailDispatch(logId: number, recipientEmail: string, message: 
     console.warn("[runEmailDispatch] Failed to resolve email subject from database logs:", err);
   }
 
-  const result = await sendEmail(recipientEmail, subject, message, sendgridConfig);
+  const result = await sendEmail(recipientEmail, subject, message, nodemailerConfig);
 
   if (result.success) {
-    dbOps.updateCommunicationLogStatus(
+    await dbOps.updateCommunicationLogStatus(
       logId,
       '🟢 Delivered Successfully',
       1,
@@ -1000,7 +1049,7 @@ async function runEmailDispatch(logId: number, recipientEmail: string, message: 
     );
     return true;
   } else {
-    dbOps.updateCommunicationLogStatus(
+    await dbOps.updateCommunicationLogStatus(
       logId,
       '🔴 Delivery Failed',
       1,
@@ -1015,7 +1064,7 @@ async function runEmailDispatch(logId: number, recipientEmail: string, message: 
 
 // High priority dispatch credentials via external API and tracking engine
 // Template builder for standard notification events matching dynamic formats
-function getTemplateMessage(type: string, acc: any, booking?: any): string {
+async function getTemplateMessage(type: string, acc: any, booking?: any): Promise<string> {
   const guestName = acc.full_name || 'Valued Guest';
   const guestIdStr = acc.guest_id_str || 'SNP-GUEST-001';
   const username = acc.username || 'guest_snp001';
@@ -1061,7 +1110,7 @@ function getTemplateMessage(type: string, acc: any, booking?: any): string {
 
     // Backward compatibility templates
     case 'Booking Confirmation': {
-      const rooms = dbOps.getRooms();
+      const rooms = await dbOps.getRooms();
       const room = rooms.find(r => r.room_id === booking?.room_id);
       const guestsCount = room ? room.capacity : 2;
       const roomType = room ? room.room_type : (booking?.room_type || 'Standard Room');
@@ -1114,7 +1163,7 @@ app.post('/api/auth/dispatch', async (req, res) => {
 
     // 1. Resolve Details if Retrying
     if (retry_log_id) {
-      const logs = dbOps.getCommunicationLogs();
+      const logs = await dbOps.getCommunicationLogs();
       oldLog = logs.find(l => l.log_id === Number(retry_log_id));
       if (!oldLog) {
         return res.status(404).json({ 
@@ -1135,7 +1184,7 @@ app.post('/api/auth/dispatch', async (req, res) => {
     } 
     // 2. Resolve if Test
     else if (is_test) {
-      finalGuestName = "Hotel Administrator";
+      finalGuestName = "Hotel Manager";
       finalGuestIdStr = "SNP-ADMIN-101";
       finalRecipientEmail = "thunikipatiabhiram173@gmail.com";
       finalPhone = "+919812488321";
@@ -1143,9 +1192,9 @@ app.post('/api/auth/dispatch', async (req, res) => {
     } 
     // 3. Resolve normally via ids
     else {
-      const bookings = dbOps.getBookings();
-      const guests = dbOps.getGuests();
-      const accounts = dbOps.getGuestAccounts();
+      const bookings = await dbOps.getBookings();
+      const guests = await dbOps.getGuests();
+      const accounts = await dbOps.getGuestAccounts();
 
       console.log(`[Recipient Selection] Initiating lookup: account_id=${account_id || 'N/A'}, guest_id=${guest_id || 'N/A'}, booking_id=${booking_id || 'N/A'}`);
 
@@ -1232,7 +1281,7 @@ app.post('/api/auth/dispatch', async (req, res) => {
     }
 
     // Look up credentials from guest accounts to append to notification templates
-    const lookupAccounts = dbOps.getGuestAccounts();
+    const lookupAccounts = await dbOps.getGuestAccounts();
     const activeAcc = lookupAccounts.find(a => 
       String(a.guest_id_str) === String(finalGuestIdStr) || 
       String(a.account_id) === String(account_id)
@@ -1243,7 +1292,8 @@ app.post('/api/auth/dispatch', async (req, res) => {
     // Capture standard template fallback text
     let finalMessageContent = customMessage || "";
     if (!finalMessageContent) {
-      const activeBooking = dbOps.getBookings().find(b => String(b.booking_id) === String(resolvedBookingId)) || {
+      const allBookingsForTemplate = await dbOps.getBookings();
+      const activeBooking = allBookingsForTemplate.find(b => String(b.booking_id) === String(resolvedBookingId)) || {
         booking_id: resolvedBookingId || 101,
         check_in_date: "08-Jun-2026",
         check_out_date: "12-Jun-2026",
@@ -1251,7 +1301,7 @@ app.post('/api/auth/dispatch', async (req, res) => {
         price_per_night: 3500
       };
       
-      finalMessageContent = getTemplateMessage(
+      finalMessageContent = await getTemplateMessage(
         finalCommType, 
         activeAcc || { full_name: finalGuestName, guest_id_str: finalGuestIdStr, username: tempUsername, password_hash: tempPassword }, 
         activeBooking
@@ -1265,7 +1315,7 @@ app.post('/api/auth/dispatch', async (req, res) => {
         const aiClient = getAiClient();
         if (aiClient) {
           const aiResponse = await aiClient.models.generateContent({
-            model: 'gemini-3.5-flash',
+            model: 'gemini-2.5-flash',
             contents: prompt
           });
           if (aiResponse && aiResponse.text) {
@@ -1286,7 +1336,7 @@ app.post('/api/auth/dispatch', async (req, res) => {
     // 4. PROCESS RETRY OR DUAL-DISPATCH FLOW
     if (retry_log_id) {
       // Single log retry flow
-      const logs = dbOps.getCommunicationLogs();
+      const logs = await dbOps.getCommunicationLogs();
       const oldLog = logs.find(l => l.log_id === Number(retry_log_id));
       if (!oldLog) {
         return res.status(404).json({ 
@@ -1298,8 +1348,8 @@ app.post('/api/auth/dispatch', async (req, res) => {
       }
 
       const retryAttempts = (oldLog.delivery_attempts || 1) + 1;
-      dbOps.updateCommunicationLogStatus(oldLog.log_id, '🔵 In Progress', retryAttempts, "", oldLog.channel === 'Email' ? finalRecipientEmail : finalPhone, "");
-      dbOps.updateCommunicationLogStatus(oldLog.log_id, '🟡 Pending Delivery', retryAttempts, "", oldLog.channel === 'Email' ? finalRecipientEmail : finalPhone, "");
+      await dbOps.updateCommunicationLogStatus(oldLog.log_id, '🔵 In Progress', retryAttempts, "", oldLog.channel === 'Email' ? finalRecipientEmail : finalPhone, "");
+      await dbOps.updateCommunicationLogStatus(oldLog.log_id, '🟡 Pending Delivery', retryAttempts, "", oldLog.channel === 'Email' ? finalRecipientEmail : finalPhone, "");
 
       let succeeded = false;
       if (oldLog.channel === 'WhatsApp') {
@@ -1308,7 +1358,7 @@ app.post('/api/auth/dispatch', async (req, res) => {
         succeeded = await runEmailDispatch(oldLog.log_id, finalRecipientEmail, finalMessageContent);
       }
 
-      const updatedLogs = dbOps.getCommunicationLogs();
+      const updatedLogs = await dbOps.getCommunicationLogs();
       const updatedLog = updatedLogs.find(l => l.log_id === oldLog.log_id) || oldLog;
 
       if (succeeded) {
@@ -1327,7 +1377,7 @@ app.post('/api/auth/dispatch', async (req, res) => {
       console.log("=== INITIATING COMPLETELY INDEPENDENT DISPATCH HIERARCHY ===");
 
       // Create WhatsApp Audit Entry first
-      const whatsappLog = dbOps.createCommunicationLog({
+      const whatsappLog = await dbOps.createCommunicationLog({
         guest_id_str: finalGuestIdStr,
         guest_name: finalGuestName,
         channel: 'WhatsApp',
@@ -1340,7 +1390,7 @@ app.post('/api/auth/dispatch', async (req, res) => {
       });
 
       // Create Email Audit Entry second
-      const emailLog = dbOps.createCommunicationLog({
+      const emailLog = await dbOps.createCommunicationLog({
         guest_id_str: finalGuestIdStr,
         guest_name: finalGuestName,
         channel: 'Email',
@@ -1353,8 +1403,8 @@ app.post('/api/auth/dispatch', async (req, res) => {
       });
 
       // Set both to Pending
-      dbOps.updateCommunicationLogStatus(whatsappLog.log_id, '🟡 Pending Delivery', 1, "", finalPhone, "");
-      dbOps.updateCommunicationLogStatus(emailLog.log_id, '🟡 Pending Delivery', 1, "", finalRecipientEmail, "");
+      await dbOps.updateCommunicationLogStatus(whatsappLog.log_id, '🟡 Pending Delivery', 1, "", finalPhone, "");
+      await dbOps.updateCommunicationLogStatus(emailLog.log_id, '🟡 Pending Delivery', 1, "", finalRecipientEmail, "");
 
       if (targetChannel === 'WhatsApp') {
         console.log(`[Queue Runner] Processing WhatsApp Dispatch Log #${whatsappLog.log_id}`);
@@ -1367,7 +1417,7 @@ app.post('/api/auth/dispatch', async (req, res) => {
           console.log(`[Queue Runner] Independent delivery loop completed safely.`);
         }, 50);
 
-        const updatedLogs = dbOps.getCommunicationLogs();
+        const updatedLogs = await dbOps.getCommunicationLogs();
         const updatedLog = updatedLogs.find(l => l.log_id === whatsappLog.log_id) || whatsappLog;
 
         if (wsSucceeded) {
@@ -1393,7 +1443,7 @@ app.post('/api/auth/dispatch', async (req, res) => {
           console.log(`[Queue Runner] Independent delivery loop completed safely.`);
         }, 50);
 
-        const updatedLogs = dbOps.getCommunicationLogs();
+        const updatedLogs = await dbOps.getCommunicationLogs();
         const updatedLog = updatedLogs.find(l => l.log_id === emailLog.log_id) || emailLog;
 
         if (emailSucceeded) {
@@ -1429,9 +1479,9 @@ app.post('/api/auth/bulk-dispatch', async (req, res) => {
   } = req.body;
 
   try {
-    const guests = dbOps.getGuests();
-    const accounts = dbOps.getGuestAccounts();
-    const bookings = dbOps.getBookings();
+    const guests = await dbOps.getGuests();
+    const accounts = await dbOps.getGuestAccounts();
+    const bookings = await dbOps.getBookings();
 
     let resolvedAccounts: any[] = [];
 
@@ -1441,7 +1491,7 @@ app.post('/api/auth/bulk-dispatch', async (req, res) => {
       const todayDate = new Date().toISOString().split('T')[0];
       if (group_segment === 'checkins_today') {
         const checkinsGuestIds = bookings
-          .filter(b => b.check_in_date === todayDate)
+          .filter(b => b.check_in_date && getFormattedDateString(b.check_in_date) === todayDate)
           .map(b => b.guest_id);
         resolvedAccounts = accounts.filter(acc => {
           const guest = guests.find(g => g.email.toLowerCase() === acc.email.toLowerCase());
@@ -1494,8 +1544,7 @@ app.post('/api/auth/bulk-dispatch', async (req, res) => {
           full_name: targetGuest.full_name,
           email: targetGuest.email,
           mobile_number: targetGuest.mobile_number,
-          stay_duration: "N/A",
-          room_preference: "N/A"
+          stay_duration: "N/A"
         }];
       }
     }
@@ -1506,7 +1555,7 @@ app.post('/api/auth/bulk-dispatch', async (req, res) => {
     // Create log entries in Pending state to show in the UI immediately
     for (const acc of resolvedAccounts) {
       for (const channel of channels) {
-        const log = dbOps.createCommunicationLog({
+        const log = await dbOps.createCommunicationLog({
           guest_id_str: acc.guest_id_str,
           guest_name: acc.full_name,
           channel: channel as 'WhatsApp' | 'Email',
@@ -1537,7 +1586,7 @@ app.post('/api/auth/bulk-dispatch', async (req, res) => {
 
         let finalMessage = customMessage || "";
         if (!finalMessage) {
-          finalMessage = getTemplateMessage(communication_type, acc, matchingBooking);
+          finalMessage = await getTemplateMessage(communication_type, acc, matchingBooking);
         }
 
         // Apply Gemini enhancement if active
@@ -1546,7 +1595,7 @@ app.post('/api/auth/bulk-dispatch', async (req, res) => {
           try {
             const prompt = `Compose a short, highly secure luxury hotel message for active guest ${acc.full_name}. Custom content type classification: ${communication_type}. Context: ${finalMessage}. Contact channel: ${log.channel}. Keep it under 2 lines. Maintain polished premium resort Sai Nirvana Plaza tone. IMPORTANT: If classification is "User Credentials" or "User Credentials", you MUST preserve and include the exact Username: ${acc.username} and Temporary Password: ${acc.password_hash} fields so the guest can access their account.`;
             const aiResponse = await aiClient.models.generateContent({
-              model: 'gemini-3.5-flash',
+              model: 'gemini-2.5-flash',
               contents: prompt
             });
             if (aiResponse && aiResponse.text) {
@@ -1571,7 +1620,7 @@ app.post('/api/auth/bulk-dispatch', async (req, res) => {
         }
 
         // Set status to In Progress
-        dbOps.updateCommunicationLogStatus(log.log_id, '🔵 In Progress', 1, "", log.channel === 'Email' ? acc.email : retrievedPhone, "");
+        await dbOps.updateCommunicationLogStatus(log.log_id, '🔵 In Progress', 1, "", log.channel === 'Email' ? acc.email : retrievedPhone, "");
 
         try {
           // Dispatch directly through default channels (WhatsApp/Email)
@@ -1579,7 +1628,7 @@ app.post('/api/auth/bulk-dispatch', async (req, res) => {
             const formattedPhone = formatIndianPhoneNumber(retrievedPhone);
             if (!formattedPhone) {
               console.error(`[Bulk Dispatcher] Invalid phone number "${retrievedPhone}" for guest "${guestName}". Skipping WhatsApp dispatch.`);
-              dbOps.updateCommunicationLogStatus(
+              await dbOps.updateCommunicationLogStatus(
                 log.log_id,
                 '🔴 Delivery Failed',
                 1,
@@ -1596,7 +1645,7 @@ app.post('/api/auth/bulk-dispatch', async (req, res) => {
           }
         } catch (dispatchError) {
           console.error(`[Bulk Dispatcher] Failed to dispatch log #${log.log_id} to ${retrievedPhone}:`, dispatchError);
-          dbOps.updateCommunicationLogStatus(
+          await dbOps.updateCommunicationLogStatus(
             log.log_id,
             '🔴 Delivery Failed',
             1,

@@ -6,7 +6,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   Building2, Volume2, VolumeX, Shield, User, ClipboardList, 
-  Trash2, Database, HelpCircle, LogOut, ChevronDown, 
+  Trash2, HelpCircle, LogOut, ChevronDown, 
   ShieldCheck, CheckSquare, Landmark, Users, Sparkles,
   Sun, Moon, Home
 } from 'lucide-react';
@@ -76,13 +76,6 @@ export function Header({ currentRole, onRoleChange, soundEnabled, onToggleSound,
       icon: Landmark, 
       color: 'text-purple-650',
       description: 'GST & Payments'
-    },
-    { 
-      value: 'Administrator', 
-      label: 'Admin', 
-      icon: Database, 
-      color: 'text-rose-650',
-      description: 'System Config'
     }
   ];
 

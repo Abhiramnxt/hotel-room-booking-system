@@ -12667,7 +12667,6 @@
       "mobile_number": "+91 9876543210",
       "email": "thunikipatiabhiram173@gmail.com",
       "stay_duration": "5 Nights",
-      "room_preference": "Premium Deluxe",
       "is_activated": true,
       "first_login_password_changed": true,
       "created_at": "2026-06-14T06:42:45.136Z"
@@ -12681,7 +12680,6 @@
       "mobile_number": "+91 9812345678",
       "email": "rajesh@gmail.com",
       "stay_duration": "4 Nights",
-      "room_preference": "Standard Room",
       "is_activated": true,
       "first_login_password_changed": true,
       "created_at": "2026-06-14T06:42:45.136Z"
@@ -12695,7 +12693,6 @@
       "mobile_number": "+91 9876543215",
       "email": "priyanka@yahoo.com",
       "stay_duration": "3 Nights",
-      "room_preference": "Premium Deluxe",
       "is_activated": true,
       "first_login_password_changed": true,
       "created_at": "2026-06-14T06:42:45.136Z"

@@ -4,7 +4,7 @@
  */
 
 // User roles in the application
-export type UserRole = 'Guest' | 'Front Desk Staff' | 'Housekeeping Staff' | 'Housekeeping Team' | 'Hotel Manager' | 'Accounts Staff' | 'Administrator';
+export type UserRole = 'Guest' | 'Front Desk Staff' | 'Housekeeping Staff' | 'Housekeeping Team' | 'Hotel Manager' | 'Accounts Staff';
 
 // Tables definitions as in the requested MySQL Database
 export interface Guest {
@@ -94,7 +94,15 @@ export interface RoomServiceRequest {
 export interface Complaint {
   complaint_id: number;
   guest_id: number;
-  complaint_category: 'Wi-Fi' | 'Plumbing' | 'AC/Heating' | 'Room Service' | 'Noise' | 'Other';
+  complaint_category:
+    | 'Room Cleaning / Guest Services'
+    | 'Air Conditioning Problem'
+    | 'Wi-Fi Internet Disconnections'
+    | 'Television / DTH Issue'
+    | 'Plumbing / Water Leakage'
+    | 'Environmental Noise Complaint'
+    | 'Room Service Delay'
+    | 'Other Specific Concerns';
   complaint_description: string;
   priority_level: 'Low' | 'Medium' | 'High' | 'Critical';
   complaint_status: 'Pending' | 'In Progress' | 'Resolved';
@@ -171,7 +179,6 @@ export interface GuestAccount {
   mobile_number: string;
   email: string;
   stay_duration: string;
-  room_preference: string;
   is_activated: boolean;
   first_login_password_changed: boolean;
   created_at: string;

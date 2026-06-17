@@ -51,7 +51,7 @@ export function MessagingReportingDashboard({ onBack, currentRole = 'Front Desk 
 
   // UI States
   const [isLoading, setIsLoading] = useState(false);
-  const [notificationTab, setNotificationTab] = useState<'Guest' | 'Reception' | 'Manager' | 'Admin'>('Reception');
+  const [notificationTab, setNotificationTab] = useState<'Guest' | 'Reception' | 'Manager'>('Reception');
   const [activeReportPdf, setActiveReportPdf] = useState<any | null>(null);
   const [toastMessage, setToastMessage] = useState('');
 
@@ -191,24 +191,6 @@ export function MessagingReportingDashboard({ onBack, currentRole = 'Front Desk 
   useEffect(() => {
     loadDashboardData();
   }, []);
-
-  useEffect(() => {
-    const hasInflight = commLogs.some((l: any) => 
-      l.status_info.includes('Progress') || 
-      l.status_info.includes('Pending') || 
-      l.status_info.includes('Processing') || 
-      l.status_info.includes('Retrying') ||
-      l.status_info.includes('🟡') ||
-      l.status_info.includes('🔵')
-    );
-
-    if (hasInflight) {
-      const interval = setInterval(() => {
-        loadDashboardData();
-      }, 2000);
-      return () => clearInterval(interval);
-    }
-  }, [commLogs]);
 
   // Show dynamic brief feedback toaster
   const showToast = (msg: string) => {
@@ -605,7 +587,6 @@ export function MessagingReportingDashboard({ onBack, currentRole = 'Front Desk 
     });
   };
 
-  // Filter classification option selections dynamically by role
   const getClassificationOptions = () => {
     switch (currentRole) {
       case 'Hotel Manager':
@@ -613,10 +594,7 @@ export function MessagingReportingDashboard({ onBack, currentRole = 'Front Desk 
           { value: 'VIP Guest Communications', label: '👑 VIP Guest Communication' },
           { value: 'Corporate Booking Communications', label: '💼 Corporate Booking Bulletin' },
           { value: 'Guest Notifications', label: '🔔 General Guest Notification' },
-          { value: 'Escalation Messages', label: '🚨 Front Desk Escalation Alert' }
-        ];
-      case 'Administrator':
-        return [
+          { value: 'Escalation Messages', label: '🚨 Front Desk Escalation Alert' },
           { value: 'Test WhatsApp APIs', label: '⚡ Test WhatsApp Sandbox API' },
           { value: 'Test Email APIs', label: '📧 Test Email API (Disabled)' },
           { value: 'Configure Communication Settings', label: '⚙️ Configure SMTP/Webhook Gateway' },
@@ -1256,7 +1234,7 @@ export function MessagingReportingDashboard({ onBack, currentRole = 'Front Desk 
 
             {/* Audience Tabs switcher */}
             <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
-              {(['Guest', 'Reception', 'Manager', 'Admin'] as const).map((tab) => (
+              {(['Guest', 'Reception', 'Manager'] as const).map((tab) => (
                 <button
                   key={tab}
                   onClick={() => { playSound('tap'); setNotificationTab(tab); }}
@@ -1409,36 +1387,6 @@ export function MessagingReportingDashboard({ onBack, currentRole = 'Front Desk 
                 )}
               </div>
             )}
-
-            {/* ADMIN TAB FEED */}
-            {notificationTab === 'Admin' && (
-              <div className="space-y-3.5">
-                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100 flex items-start gap-3">
-                  <Database className="h-4 w-4 text-[#003366] flex-shrink-0 mt-0.5" />
-                  <div className="space-y-0.5 text-xs text-slate-600">
-                    <span className="font-bold text-slate-900">💾 Mock-MySQL DBMS Consistency Check</span>
-                    <p className="text-[11px]">Strict schema normal forms applied. JSON indices loaded from static storage securely.</p>
-                  </div>
-                </div>
-
-                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100 flex items-start gap-3">
-                  <Shield className="h-4 w-4 text-slate-600 flex-shrink-0 mt-0.5" />
-                  <div className="space-y-0.5 text-xs text-slate-600">
-                    <span className="font-bold text-slate-900">🛡️ Guest Portal Security Logs</span>
-                    <p className="text-[11px]">Access gates encrypted with temporary clearing passwords hash checks.</p>
-                  </div>
-                </div>
-
-                <div className="bg-emerald-50 p-3.5 rounded-xl border border-emerald-100 flex items-start gap-3">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-600 flex-shrink-0 mt-0.5" />
-                  <div className="space-y-0.5 text-xs text-emerald-800">
-                    <span className="font-bold">✓ Communication Queues Active</span>
-                    <p className="text-[11px]">All outbound notification systems are online and fully synchronized.</p>
-                  </div>
-                </div>
-              </div>
-            )}
-
           </div>
 
         </div>

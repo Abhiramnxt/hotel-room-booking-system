@@ -40,7 +40,12 @@ export function AccountsDashboard() {
       const res = await fetch('/api/payments');
       if (res.ok) {
         const data = await res.json();
-        setPayments(data.payments || []);
+        const formatted = (data.payments || []).map((p: any) => ({
+          ...p,
+          amount: Number(p.amount) || 0,
+          gst_amount: Number(p.gst_amount) || 0
+        }));
+        setPayments(formatted);
       }
     } catch (e) {
       console.warn("Could not retrieve payment matrices:", e);
@@ -93,11 +98,11 @@ export function AccountsDashboard() {
   // Calculate aggregates
   const { totalReceived, totalGST, totalPending } = React.useMemo(() => {
     const paidPayments = payments.filter(p => p.payment_status === 'Paid');
-    const totalReceived = paidPayments.reduce((sum, p) => sum + p.amount, 0);
-    const totalGST = paidPayments.reduce((sum, p) => sum + p.gst_amount, 0);
+    const totalReceived = paidPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const totalGST = paidPayments.reduce((sum, p) => sum + Number(p.gst_amount || 0), 0);
     const totalPending = payments
       .filter(p => p.payment_status === 'Pending')
-      .reduce((sum, p) => sum + p.amount, 0);
+      .reduce((sum, p) => sum + Number(p.amount || 0), 0);
     return { totalReceived, totalGST, totalPending };
   }, [payments]);
 
@@ -116,7 +121,7 @@ export function AccountsDashboard() {
 
         <button
           onClick={() => { playSound('tap'); fetchPayments(); }}
-          className="bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold px-4 py-2.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-200"
+          className="bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold px-4 py-2.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-200 animate-pulse-subtle"
           id="btn_refresh_payments_desk"
         >
           <RefreshCw className="h-4 w-4" />
@@ -125,41 +130,53 @@ export function AccountsDashboard() {
       </div>
 
       {/* METRICS COUNT GRID */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-        <div className="bg-gradient-to-br from-[#001f3f] to-[#003366] text-white rounded-2xl p-5 shadow-lg space-y-2 border border-[#D4AF37]/35">
-          <div className="flex justify-between items-center">
-            <span className="text-[10px] uppercase font-bold text-slate-350 tracking-wider">Total Received (Gross)</span>
-            <CircleDollarSign className="h-5 w-5 text-[#F9D976]" />
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="flex flex-col justify-between bg-gradient-to-br from-[#001f3f] to-[#003366] text-white rounded-2xl p-5 shadow-lg border border-[#D4AF37]/35 min-h-[140px] w-full overflow-hidden">
+          <div className="space-y-2">
+            <div className="flex justify-between items-center gap-2">
+              <span className="text-[10px] uppercase font-bold text-slate-300 tracking-wider truncate">Total Received (Gross)</span>
+              <CircleDollarSign className="h-5 w-5 text-[#F9D976] shrink-0" />
+            </div>
+            <h3 className="text-xl sm:text-2xl lg:text-3xl font-black font-mono text-[#F9D976] truncate" title={`₹${totalReceived.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}>
+              ₹{totalReceived.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </h3>
           </div>
-          <h3 className="text-2xl font-bold font-mono text-[#F9D976]">₹{totalReceived.toLocaleString('en-IN')}</h3>
-          <p className="text-[10px] text-emerald-400 font-mono">🟢 Verified through bank-node transaction references</p>
+          <p className="text-[10px] text-emerald-450 font-mono mt-4 truncate">🟢 Verified bank-node transaction references</p>
         </div>
 
-        <div className="bg-white text-slate-900 rounded-2xl p-5 border border-[#D4AF37]/20 border-l-4 border-l-[#003366] shadow-sm space-y-2">
-          <div className="flex justify-between items-center">
-            <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Taxes Collected (GST)</span>
-            <Landmark className="h-5 w-5 text-[#003366]" />
+        <div className="flex flex-col justify-between bg-white text-slate-900 rounded-2xl p-5 border border-[#D4AF37]/20 border-l-4 border-l-[#003366] shadow-sm min-h-[140px] w-full overflow-hidden">
+          <div className="space-y-2">
+            <div className="flex justify-between items-center gap-2">
+              <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider truncate">Taxes Collected (GST)</span>
+              <Landmark className="h-5 w-5 text-[#003366] shrink-0" />
+            </div>
+            <h3 className="text-xl sm:text-2xl lg:text-3xl font-black font-mono text-[#003366] truncate" title={`₹${totalGST.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}>
+              ₹{totalGST.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </h3>
           </div>
-          <h3 className="text-2xl font-bold font-mono text-[#003366]">₹{totalGST.toLocaleString('en-IN')}</h3>
-          <p className="text-[10px] text-slate-500">18% Standard Lodging & 12% Room Services</p>
+          <p className="text-[10px] text-slate-500 mt-4 truncate">18% Standard Lodging & 12% Room Services</p>
         </div>
 
-        <div className="bg-white text-slate-900 rounded-2xl p-5 border border-[#D4AF37]/20 border-l-4 border-l-slate-400 shadow-sm space-y-2">
-          <div className="flex justify-between items-center">
-            <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Pending Reconciliations</span>
-            <AlertTriangle className="h-5 w-5 text-amber-500" />
+        <div className="flex flex-col justify-between bg-white text-slate-900 rounded-2xl p-5 border border-[#D4AF37]/20 border-l-4 border-l-slate-400 shadow-sm min-h-[140px] w-full overflow-hidden">
+          <div className="space-y-2">
+            <div className="flex justify-between items-center gap-2">
+              <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider truncate">Pending Reconciliations</span>
+              <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0" />
+            </div>
+            <h3 className="text-xl sm:text-2xl lg:text-3xl font-black font-mono text-slate-800 truncate" title={`₹${totalPending.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}>
+              ₹{totalPending.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </h3>
           </div>
-          <h3 className="text-2xl font-bold font-mono text-slate-800">₹{totalPending.toLocaleString('en-IN')}</h3>
-          <p className="text-[10px] text-amber-600">UPI/Card holds pending clearance</p>
+          <p className="text-[10px] text-amber-600 mt-4 truncate">UPI/Card holds pending clearance</p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         
         {/* Ledger & Payments List */}
-        <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200/80 shadow-md p-6 space-y-6">
+        <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200/80 shadow-md p-6 space-y-6 overflow-hidden">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b pb-4">
-            <h4 className="text-sm font-bold text-slate-950 uppercase tracking-widest">
+            <h4 className="text-sm font-bold text-slate-950 uppercase tracking-widest truncate">
               Physical Invoices & Transaction Log
             </h4>
             
@@ -196,18 +213,18 @@ export function AccountsDashboard() {
               No matching accounts records in database schema.
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+            <div className="overflow-x-auto w-full">
+              <table className="w-full min-w-[700px] text-left text-xs table-layout-fixed">
                 <thead>
                   <tr className="bg-slate-50 text-slate-600 font-bold border-b">
-                    <th className="p-3">Payment ID</th>
-                    <th className="p-3">Booking ID</th>
-                    <th className="p-3">Method</th>
-                    <th className="p-3">Base Unit</th>
-                    <th className="p-3">GST (18%)</th>
-                    <th className="p-3">Gross Total</th>
-                    <th className="p-3">Cleared Status</th>
-                    <th className="p-3 text-right">Actions</th>
+                    <th className="p-3 w-24">Payment ID</th>
+                    <th className="p-3 w-32">Booking ID</th>
+                    <th className="p-3 w-28">Method</th>
+                    <th className="p-3 w-36">Base Unit</th>
+                    <th className="p-3 w-36">GST (12%/18%)</th>
+                    <th className="p-3 w-40">Gross Total</th>
+                    <th className="p-3 w-36">Cleared Status</th>
+                    <th className="p-3 text-right w-28">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-medium">
@@ -218,9 +235,9 @@ export function AccountsDashboard() {
                       <td className="p-3 font-semibold text-slate-700">
                         <span className="bg-slate-100 px-2 py-0.5 rounded text-[10px]">{p.payment_method}</span>
                       </td>
-                      <td className="p-3 font-mono">₹{(p.amount - p.gst_amount).toLocaleString('en-IN')}</td>
-                      <td className="p-3 font-mono text-slate-400">₹{p.gst_amount.toLocaleString('en-IN')}</td>
-                      <td className="p-3 font-mono font-bold text-slate-900">₹{p.amount.toLocaleString('en-IN')}</td>
+                      <td className="p-3 font-mono">₹{Number(p.amount - p.gst_amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td className="p-3 font-mono text-slate-400">₹{Number(p.gst_amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td className="p-3 font-mono font-bold text-slate-900">₹{Number(p.amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                       <td className="p-3">
                         <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${
                           p.payment_status === 'Paid'

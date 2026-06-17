@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { 
   CheckCircle2, RefreshCw, AlertTriangle, UserCheck, ShieldAlert, 
   Utensils, Coffee, Wrench, ClipboardList, AlertOctagon, ListFilter,
-  Search, Clock, ChevronRight, User, Home, Sparkles
+  Search, Clock, ChevronRight, User, Home, Sparkles,
+  PlayCircle, UserPlus, Eye, ShieldCheck
 } from 'lucide-react';
 import { HousekeepingTask, RoomServiceRequest, Complaint, Booking } from '../types';
 import { playSound } from '../soundUtils';
@@ -26,8 +27,8 @@ export function HousekeepingDashboard() {
   const [activeFilter, setActiveFilter] = useState<'All' | 'Food Orders' | 'Room Service Requests' | 'Issue Reports' | 'Maintenance Requests' | 'Guest Complaints' | 'Housekeeping Requests' | 'Completed' | 'Pending'>('All');
   const [searchQuery, setSearchQuery] = useState('');
 
-  const fetchAllRequests = async () => {
-    setIsLoading(true);
+  const fetchAllRequests = async (silent = false) => {
+    if (!silent) setIsLoading(true);
     try {
       // Fetch datasets in parallel
       const [hkRes, rsRes, cpRes, bookingsRes] = await Promise.all([
@@ -90,7 +91,7 @@ export function HousekeepingDashboard() {
 
       // 3. Process Complaints & Maintenance reports
       complaints.forEach(cp => {
-        const isMaintenance = cp.complaint_category === 'Plumbing' || cp.complaint_category === 'AC/Heating';
+        const isMaintenance = cp.complaint_category === 'Plumbing / Water Leakage' || cp.complaint_category === 'Air Conditioning Problem';
         combined.push({
           id: `CP-${cp.complaint_id}`,
           originalId: cp.complaint_id,
@@ -111,13 +112,32 @@ export function HousekeepingDashboard() {
     } catch (e) {
       console.warn("Error loading unified housekeeping dashboard data:", e);
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
     }
   };
 
   useEffect(() => {
     fetchAllRequests();
   }, []);
+
+  /**
+   * Broadcasts a service status change signal so that GuestDashboard
+   * (which may be mounted in the same tab or another tab) can immediately
+   * refresh its room-service and complaint data.
+   *
+   * Two mechanisms are used:
+   *   1. localStorage write → fires the 'storage' event in OTHER tabs.
+   *   2. Custom DOM event  → fires in the SAME tab (localStorage does NOT
+   *      trigger 'storage' in the tab that wrote the value).
+   */
+  const broadcastServiceStatusChange = () => {
+    try {
+      localStorage.setItem('snp_service_status_change', String(Date.now()));
+    } catch {
+      // localStorage might be unavailable in some environments; ignore silently
+    }
+    window.dispatchEvent(new CustomEvent('snp_service_status_change'));
+  };
 
   const handleUpdateStatus = async (item: UnifiedRequest, nextStatus: 'In Progress' | 'Completed') => {
     playSound('click');
@@ -144,6 +164,8 @@ export function HousekeepingDashboard() {
       if (res.ok) {
         playSound('success');
         fetchAllRequests();
+        // Immediately notify GuestDashboard of the room-service/complaint status change
+        broadcastServiceStatusChange();
       }
     } catch (e) {
       console.error("Failed to update status:", e);
@@ -210,38 +232,38 @@ export function HousekeepingDashboard() {
     switch (type) {
       case 'Food Order':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-            <Utensils className="h-3 w-3" />
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+            <Utensils className="h-3 w-3 shrink-0" />
             <span>Food Orders</span>
           </span>
         );
       case 'Room Service':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-50 text-blue-800 border border-blue-200">
-            <Coffee className="h-3 w-3" />
-            <span>Room Service Requests</span>
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-800 border border-blue-200">
+            <Coffee className="h-3 w-3 shrink-0" />
+            <span>Room Service</span>
           </span>
         );
       case 'Housekeeping Clean':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-250">
-            <Home className="h-3 w-3" />
-            <span>Housekeeping Requests</span>
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+            <Home className="h-3 w-3 shrink-0" />
+            <span>Housekeeping</span>
           </span>
         );
       case 'Maintenance Request':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-50 text-rose-800 border border-rose-200">
-            <Wrench className="h-3 w-3" />
-            <span>Maintenance Requests</span>
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-800 border border-rose-200">
+            <Wrench className="h-3 w-3 shrink-0" />
+            <span>Maintenance</span>
           </span>
         );
       case 'Issue Report':
       default:
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-purple-50 text-purple-800 border border-purple-200">
-            <AlertTriangle className="h-3 w-3" />
-            <span>Issue Reports</span>
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-800 border border-purple-200">
+            <AlertTriangle className="h-3 w-3 shrink-0" />
+            <span>Issue Report</span>
           </span>
         );
     }
@@ -262,6 +284,225 @@ export function HousekeepingDashboard() {
     }
   };
 
+  /**
+   * renderActionButtons — returns the correct set of operational buttons
+   * for each request type, based on the current status.
+   *
+   * Food Orders         → Start Processing | Mark Completed
+   * Room Service        → Assign           | In Progress    | Mark Completed
+   * Issue Reports       → Review           | Resolve        | Mark Completed
+   * Maintenance Request → Assign Staff     | In Progress    | Mark Completed
+   * Housekeeping Clean  → Assign Staff     | In Progress    | Mark Completed
+   * Guest Complaints    → Investigate      | Resolve        | Mark Completed
+   */
+  const renderActionButtons = (req: UnifiedRequest, compact = false) => {
+    const btnBase = compact
+      ? 'font-bold px-2.5 py-1 rounded-lg text-[10px] uppercase transition-colors cursor-pointer flex items-center gap-1 whitespace-nowrap'
+      : 'font-bold px-3 py-1.5 rounded-lg text-[10px] uppercase transition-colors cursor-pointer flex items-center gap-1 whitespace-nowrap';
+
+    const pendingBtn = 'bg-slate-900 hover:bg-slate-800 text-white ' + btnBase;
+    const progressBtn = 'bg-blue-600 hover:bg-blue-700 text-white ' + btnBase;
+    const resolveBtn = 'bg-violet-600 hover:bg-violet-700 text-white ' + btnBase;
+    const completeBtn = 'bg-emerald-600 hover:bg-emerald-700 text-white ' + btnBase;
+
+    if (req.status === 'Completed') {
+      return (
+        <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50/50 p-1 px-2 border border-emerald-200 rounded-md flex items-center gap-1">
+          <CheckCircle2 className="h-3 w-3" />
+          <span>Done</span>
+        </span>
+      );
+    }
+
+    // ── Food Orders ──────────────────────────────────────────────
+    if (req.requestType === 'Food Order') {
+      return (
+        <div className="flex flex-wrap gap-1">
+          {req.status === 'Pending' && (
+            <button
+              onClick={() => handleUpdateStatus(req, 'In Progress')}
+              className={pendingBtn}
+              title="Start Processing this food order"
+            >
+              <PlayCircle className="h-3 w-3" />
+              <span>Start Processing</span>
+            </button>
+          )}
+          {req.status === 'In Progress' && (
+            <button
+              onClick={() => handleUpdateStatus(req, 'Completed')}
+              className={completeBtn}
+              title="Mark food order as delivered & completed"
+            >
+              <CheckCircle2 className="h-3 w-3" />
+              <span>Mark Completed</span>
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    // ── Room Service Requests ────────────────────────────────────
+    if (req.requestType === 'Room Service') {
+      return (
+        <div className="flex flex-wrap gap-1">
+          {req.status === 'Pending' && (
+            <button
+              onClick={() => handleUpdateStatus(req, 'In Progress')}
+              className={pendingBtn}
+              title="Assign staff to this room service request"
+            >
+              <UserPlus className="h-3 w-3" />
+              <span>Assign</span>
+            </button>
+          )}
+          {req.status === 'In Progress' && (
+            <>
+              <button
+                onClick={() => handleUpdateStatus(req, 'Completed')}
+                className={completeBtn}
+                title="Mark room service as completed"
+              >
+                <CheckCircle2 className="h-3 w-3" />
+                <span>Mark Completed</span>
+              </button>
+            </>
+          )}
+        </div>
+      );
+    }
+
+    // ── Issue Reports ────────────────────────────────────────────
+    if (req.requestType === 'Issue Report' || req.requestType === 'Special Service Request') {
+      return (
+        <div className="flex flex-wrap gap-1">
+          {req.status === 'Pending' && (
+            <button
+              onClick={() => handleUpdateStatus(req, 'In Progress')}
+              className={pendingBtn}
+              title="Start reviewing this issue report"
+            >
+              <Eye className="h-3 w-3" />
+              <span>Review</span>
+            </button>
+          )}
+          {req.status === 'In Progress' && (
+            <>
+              <button
+                onClick={() => handleUpdateStatus(req, 'Completed')}
+                className={resolveBtn}
+                title="Resolve and close this issue report"
+              >
+                <ShieldCheck className="h-3 w-3" />
+                <span>Resolve</span>
+              </button>
+              <button
+                onClick={() => handleUpdateStatus(req, 'Completed')}
+                className={completeBtn}
+                title="Mark issue as completed"
+              >
+                <CheckCircle2 className="h-3 w-3" />
+                <span>Complete</span>
+              </button>
+            </>
+          )}
+        </div>
+      );
+    }
+
+    // ── Maintenance Requests ─────────────────────────────────────
+    if (req.requestType === 'Maintenance Request') {
+      return (
+        <div className="flex flex-wrap gap-1">
+          {req.status === 'Pending' && (
+            <button
+              onClick={() => handleUpdateStatus(req, 'In Progress')}
+              className={pendingBtn}
+              title="Assign maintenance staff"
+            >
+              <UserPlus className="h-3 w-3" />
+              <span>Assign Staff</span>
+            </button>
+          )}
+          {req.status === 'In Progress' && (
+            <button
+              onClick={() => handleUpdateStatus(req, 'Completed')}
+              className={completeBtn}
+              title="Mark maintenance as completed"
+            >
+              <CheckCircle2 className="h-3 w-3" />
+              <span>Mark Completed</span>
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    // ── Housekeeping Clean ───────────────────────────────────────
+    if (req.requestType === 'Housekeeping Clean') {
+      return (
+        <div className="flex flex-wrap gap-1">
+          {req.status === 'Pending' && (
+            <button
+              onClick={() => handleUpdateStatus(req, 'In Progress')}
+              className={pendingBtn}
+              title="Assign housekeeping staff to this room"
+            >
+              <UserPlus className="h-3 w-3" />
+              <span>Assign Staff</span>
+            </button>
+          )}
+          {req.status === 'In Progress' && (
+            <button
+              onClick={() => handleUpdateStatus(req, 'Completed')}
+              className={completeBtn}
+              title="Mark housekeeping as completed"
+            >
+              <CheckCircle2 className="h-3 w-3" />
+              <span>Mark Completed</span>
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    // ── Guest Complaints (catch-all complaint category) ──────────
+    return (
+      <div className="flex flex-wrap gap-1">
+        {req.status === 'Pending' && (
+          <button
+            onClick={() => handleUpdateStatus(req, 'In Progress')}
+            className={pendingBtn}
+            title="Begin investigating this guest complaint"
+          >
+            <ShieldAlert className="h-3 w-3" />
+            <span>Investigate</span>
+          </button>
+        )}
+        {req.status === 'In Progress' && (
+          <>
+            <button
+              onClick={() => handleUpdateStatus(req, 'Completed')}
+              className={resolveBtn}
+              title="Resolve this complaint"
+            >
+              <ShieldCheck className="h-3 w-3" />
+              <span>Resolve</span>
+            </button>
+            <button
+              onClick={() => handleUpdateStatus(req, 'Completed')}
+              className={completeBtn}
+              title="Mark complaint as completed"
+            >
+              <CheckCircle2 className="h-3 w-3" />
+              <span>Complete</span>
+            </button>
+          </>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6" id="housekeeping_dashboard_unified">
       
@@ -274,7 +515,7 @@ export function HousekeepingDashboard() {
               Unified Operations Console
             </span>
             <h3 className="text-xl md:text-2xl font-black font-heading tracking-wide uppercase">
-              Staff Services & Guest Services Dashboard
+              Staff Services &amp; Guest Services Dashboard
             </h3>
             <p className="text-xs text-slate-200 max-w-2xl leading-relaxed">
               Consolidated workspace managing guest room service orders, kitchen dining tickets, AC/plumbing complaints, and checkout chamber cleans in real-time.
@@ -379,100 +620,129 @@ export function HousekeepingDashboard() {
         </div>
       ) : (
         <>
-          {/* DESKTOP TABLE VIEW */}
-          <div className="hidden md:block bg-white rounded-3xl border border-slate-200/80 shadow-md overflow-hidden" id="housekeeping_desktop_table_container">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-900 text-[#F9D976] border-b border-[#D4AF37]/30 text-[10px] uppercase font-bold tracking-wider">
-                  <th className="p-4 pl-6">ID</th>
-                  <th className="p-4">Room No</th>
-                  <th className="p-4">Guest Name</th>
-                  <th className="p-4">Request Type</th>
-                  <th className="p-4 w-1/3">Details</th>
-                  <th className="p-4">Submitted At</th>
-                  <th className="p-4">Priority</th>
-                  <th className="p-4">Status</th>
-                  <th className="p-4 pr-6 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredRequests.map((req) => {
-                  const formattedTime = new Date(req.dateTime).toLocaleDateString('en-IN', {
-                    day: 'numeric',
-                    month: 'short',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  });
+          {/* DESKTOP TABLE VIEW — wrapped in overflow-x:auto so it never bursts the card */}
+          <div
+            className="hidden md:block bg-white rounded-3xl border border-slate-200/80 shadow-md overflow-hidden"
+            id="housekeeping_desktop_table_container"
+          >
+            {/* Scroll wrapper: overflow-x:auto keeps horizontal scroll INSIDE the card */}
+            <div className="gs-table-scroll-wrapper">
+              {/*
+                gs-table-fixed → table-layout: fixed; width: 100%
+                Column widths are declared via th colSpan width classes (gs-col-*)
+              */}
+              <table className="gs-table-fixed text-left">
+                <colgroup>
+                  <col className="gs-col-id" />
+                  <col className="gs-col-room" />
+                  <col className="gs-col-guest" />
+                  <col className="gs-col-type" />
+                  <col className="gs-col-details" />
+                  <col className="gs-col-time" />
+                  <col className="gs-col-priority" />
+                  <col className="gs-col-status" />
+                  <col className="gs-col-actions" />
+                </colgroup>
+                <thead>
+                  <tr className="bg-slate-900 text-[#F9D976] border-b border-[#D4AF37]/30 text-[10px] uppercase font-bold tracking-wider">
+                    <th className="p-4 pl-5">ID</th>
+                    <th className="p-4">Room</th>
+                    <th className="p-4">Guest Name</th>
+                    <th className="p-4">Type</th>
+                    <th className="p-4">Details</th>
+                    <th className="p-4">Submitted At</th>
+                    <th className="p-4">Priority</th>
+                    <th className="p-4">Status</th>
+                    <th className="p-4 pr-5">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRequests.map((req) => {
+                    const formattedTime = new Date(req.dateTime).toLocaleDateString('en-IN', {
+                      day: 'numeric',
+                      month: 'short',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    });
 
-                  return (
-                    <tr 
-                      key={req.id}
-                      className="hover:bg-slate-50/70 border-b border-slate-100 transition-colors"
-                    >
-                      <td className="p-4 pl-6 font-mono font-extrabold text-[#003366] text-xs">
-                        {req.id}
-                      </td>
-                      <td className="p-4 font-black text-slate-800 text-xs">
-                        Room {req.roomNumber}
-                      </td>
-                      <td className="p-4 font-semibold text-slate-700 text-xs">
-                        {req.guestName}
-                      </td>
-                      <td className="p-4">
-                        {renderTypeBadge(req.requestType)}
-                      </td>
-                      <td className="p-4 text-xs text-slate-605 max-w-[280px] truncate" title={req.requestDetails}>
-                        {req.requestDetails}
-                      </td>
-                      <td className="p-4 text-[10px] text-slate-450 font-mono">
-                        {formattedTime}
-                      </td>
-                      <td className="p-4">
-                        {renderPriorityBadge(req.priority)}
-                      </td>
-                      <td className="p-4">
-                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[9px] uppercase font-bold tracking-wider border ${
-                          req.status === 'Pending'
-                            ? 'bg-amber-50 text-amber-800 border-amber-200'
-                            : req.status === 'In Progress'
-                            ? 'bg-blue-50 text-blue-800 border-blue-200'
-                            : 'bg-emerald-50 text-emerald-850 border-emerald-250'
-                        }`}>
-                          <span className={`h-1.5 w-1.5 rounded-full ${
-                            req.status === 'Pending' ? 'bg-amber-500' : req.status === 'In Progress' ? 'bg-blue-500' : 'bg-emerald-500'
-                          }`} />
-                          <span>{req.status}</span>
-                        </span>
-                      </td>
-                      <td className="p-4 pr-6 text-right">
-                        <div className="flex gap-1.5 justify-end">
-                          {req.status === 'Pending' && (
-                            <button
-                              onClick={() => handleUpdateStatus(req, 'In Progress')}
-                              className="bg-slate-900 hover:bg-slate-800 text-white font-bold px-3 py-1.5 rounded-lg text-[10px] uppercase transition-colors cursor-pointer"
-                            >
-                              In Progress
-                            </button>
-                          )}
-                          {req.status === 'In Progress' && (
-                            <button
-                              onClick={() => handleUpdateStatus(req, 'Completed')}
-                              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-[10px] uppercase transition-colors flex items-center gap-1 cursor-pointer"
-                            >
-                              <CheckCircle2 className="h-3 w-3" />
-                              <span>Complete</span>
-                            </button>
-                          )}
-                          {req.status === 'Completed' && (
-                            <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50/50 p-1 px-2 border border-emerald-200 rounded-md">Ready</span>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                    return (
+                      <tr 
+                        key={req.id}
+                        className="hover:bg-slate-50/70 border-b border-slate-100 transition-colors"
+                      >
+                        {/* ID */}
+                        <td className="p-4 pl-5 font-mono font-extrabold text-[#003366] text-xs">
+                          {req.id}
+                        </td>
+
+                        {/* Room */}
+                        <td className="p-4 font-black text-slate-800 text-xs">
+                          Rm {req.roomNumber}
+                        </td>
+
+                        {/* Guest Name */}
+                        <td className="p-4 font-semibold text-slate-700 text-xs">
+                          <span className="block truncate" title={req.guestName}>
+                            {req.guestName}
+                          </span>
+                        </td>
+
+                        {/* Type badge */}
+                        <td className="p-4">
+                          {renderTypeBadge(req.requestType)}
+                        </td>
+
+                        {/*
+                          Details — gs-cell-details applies:
+                            white-space: normal
+                            word-break: break-word
+                            overflow-wrap: break-word
+                          This allows long text to wrap across multiple lines
+                          instead of pushing the table wider.
+                        */}
+                        <td className="p-4 text-xs text-slate-600 gs-cell-details" title={req.requestDetails}>
+                          {req.requestDetails}
+                        </td>
+
+                        {/* Submitted At */}
+                        <td className="p-4 text-[10px] text-slate-450 font-mono">
+                          {formattedTime}
+                        </td>
+
+                        {/* Priority */}
+                        <td className="p-4">
+                          {renderPriorityBadge(req.priority)}
+                        </td>
+
+                        {/* Status */}
+                        <td className="p-4">
+                          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[9px] uppercase font-bold tracking-wider border ${
+                            req.status === 'Pending'
+                              ? 'bg-amber-50 text-amber-800 border-amber-200'
+                              : req.status === 'In Progress'
+                              ? 'bg-blue-50 text-blue-800 border-blue-200'
+                              : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          }`}>
+                            <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+                              req.status === 'Pending' ? 'bg-amber-500' : req.status === 'In Progress' ? 'bg-blue-500' : 'bg-emerald-500'
+                            }`} />
+                            <span>{req.status}</span>
+                          </span>
+                        </td>
+
+                        {/*
+                          Actions — gs-cell-actions prevents buttons from overflowing.
+                          renderActionButtons(req, compact=true) uses smaller padding.
+                        */}
+                        <td className="p-4 pr-5 gs-cell-actions">
+                          {renderActionButtons(req, true)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           {/* MOBILE RESPONSIVE CARDS VIEW */}
@@ -523,7 +793,8 @@ export function HousekeepingDashboard() {
                       {renderPriorityBadge(req.priority)}
                     </div>
 
-                    <div className="bg-slate-50 border p-3 rounded-xl text-left text-xs text-slate-650 leading-relaxed font-mono">
+                    {/* Details — naturally wraps in card layout */}
+                    <div className="bg-slate-50 border p-3 rounded-xl text-left text-xs text-slate-650 leading-relaxed font-mono break-words">
                       {req.requestDetails}
                     </div>
 
@@ -533,30 +804,9 @@ export function HousekeepingDashboard() {
                     </div>
                   </div>
 
-                  {/* Actions buttons for mobile */}
+                  {/* Type-specific Action buttons for mobile */}
                   <div className="pt-3 border-t">
-                    {req.status === 'Pending' && (
-                      <button
-                        onClick={() => handleUpdateStatus(req, 'In Progress')}
-                        className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 rounded-xl text-[11px] uppercase transition-colors cursor-pointer"
-                      >
-                        Set In Progress
-                      </button>
-                    )}
-                    {req.status === 'In Progress' && (
-                      <button
-                        onClick={() => handleUpdateStatus(req, 'Completed')}
-                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-xl text-[11px] uppercase transition-colors flex items-center justify-center gap-1 cursor-pointer"
-                      >
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                        <span>Mark Completed</span>
-                      </button>
-                    )}
-                    {req.status === 'Completed' && (
-                      <div className="w-full text-center text-xs text-emerald-600 font-bold p-2 bg-emerald-50 rounded-xl border border-emerald-150">
-                        Request Resolved
-                      </div>
-                    )}
+                    {renderActionButtons(req, false)}
                   </div>
                 </div>
               );

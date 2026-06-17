@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   Lock, User, ShieldAlert, KeyRound, CheckSquare, 
   Eye, EyeOff, Loader2, ArrowLeft, ShieldCheck, Terminal,
-  ClipboardList, Landmark, Database, ChevronDown
+  ClipboardList, Landmark, ChevronDown
 } from 'lucide-react';
 import { playSound } from '../soundUtils';
 import { UserRole } from '../types';
@@ -47,8 +47,7 @@ export function ManagerLoginScreen({ onSuccess, onBack }: ManagerLoginScreenProp
     { value: 'Front Desk Staff', label: 'Front Desk', icon: ClipboardList, color: 'text-[#0F172A]' },
     { value: 'Hotel Manager', label: 'Manager', icon: ShieldCheck, color: 'text-[#0F172A]' },
     { value: 'Housekeeping Team', label: 'Guest Services', icon: CheckSquare, color: 'text-[#0F172A]' },
-    { value: 'Accounts Staff', label: 'Accounts', icon: Landmark, color: 'text-[#0F172A]' },
-    { value: 'Administrator', label: 'Admin', icon: Database, color: 'text-[#0F172A]' }
+    { value: 'Accounts Staff', label: 'Accounts', icon: Landmark, color: 'text-[#0F172A]' }
   ];
 
   const activeRoleObj = rolesList.find(r => r.value === targetRole) || rolesList[1];

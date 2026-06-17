@@ -7,12 +7,13 @@ import React, { useState, useEffect } from 'react';
 import { 
   ClipboardList, CheckSquare, LogOut, CheckCircle, RefreshCw, 
   MapPin, ShieldAlert, FileText, Smartphone, Ban, Search,
-  AlertTriangle, X, Calendar, Archive
+  AlertTriangle, X, Archive, ShieldCheck, Sparkles, Home, Clock
 } from 'lucide-react';
 import { Booking, UserRole, Room } from '../types';
 import { playSound } from '../soundUtils';
 import { CreateGuestAccountForm } from './CreateGuestAccountForm';
 import { generatePdfReport } from '../utils/pdfGenerator';
+import { RoomImage } from './RoomImage';
 
 interface FrontDeskDashboardProps {
   currentRole?: UserRole;
@@ -29,6 +30,9 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
   const [showArchivedOnly, setShowArchivedOnly] = useState(false);
   const [selectedBookingIds, setSelectedBookingIds] = useState<number[]>([]);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [activeTab, setActiveTab] = useState<'stays' | 'credentials' | 'rooms'>('stays');
+  const [resetRoomConfirm, setResetRoomConfirm] = useState<Room | null>(null);
+  const [isResettingRoom, setIsResettingRoom] = useState(false);
 
   const showLocalToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
@@ -40,6 +44,12 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
     setSelectedBookingIds([]);
   }, [statusFilter, showArchivedOnly, searchQuery]);
 
+  // Reset filters when changing active tab
+  useEffect(() => {
+    setStatusFilter('All');
+    setSearchQuery('');
+  }, [activeTab]);
+
   // Verification Modal states
   const [activeVerifyBooking, setActiveVerifyBooking] = useState<Booking | null>(null);
   const [idVerified, setIdVerified] = useState(false);
@@ -50,10 +60,8 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
   const [cancelError, setCancelError] = useState<string | null>(null);
   // ────────────────────────────────────────────────────────────────────────────
 
-  const [activeTab, setActiveTab] = useState<'stays' | 'credentials'>('stays');
-
-  const fetchBookings = async () => {
-    setIsLoading(true);
+  const fetchBookings = async (silent = false) => {
+    if (!silent) setIsLoading(true);
     try {
       const [bookingsRes, roomsRes] = await Promise.all([
         fetch('/api/bookings'),
@@ -70,13 +78,32 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
     } catch (e) {
       console.warn("Could not query front desk data:", e);
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
     }
   };
 
   useEffect(() => {
     fetchBookings();
   }, []);
+
+  /**
+   * Broadcasts a booking status change signal so that GuestDashboard
+   * (which may be mounted in the same tab or another tab) can immediately
+   * refresh its data instead of waiting for its next polling cycle.
+   *
+   * Two mechanisms are used:
+   *   1. localStorage write → fires the 'storage' event in OTHER tabs on same origin.
+   *   2. Custom DOM event   → fires in the SAME tab (localStorage.setItem does NOT
+   *      trigger 'storage' in the tab that wrote the value).
+   */
+  const broadcastBookingStatusChange = () => {
+    try {
+      localStorage.setItem('snp_booking_status_change', String(Date.now()));
+    } catch {
+      // localStorage might be unavailable in some environments; ignore silently
+    }
+    window.dispatchEvent(new CustomEvent('snp_booking_status_change'));
+  };
 
   const handleUpdateStatus = async (bookingId: number, nextStatus: Booking['booking_status']) => {
     playSound('confirm');
@@ -89,11 +116,39 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
       if (res.ok) {
         playSound('success');
         fetchBookings();
+        // Immediately notify GuestDashboard of the status change
+        broadcastBookingStatusChange();
         setActiveVerifyBooking(null);
         setIdVerified(false);
       }
     } catch (e) {
       console.warn(e);
+    }
+  };
+
+  const handleResetRoomClean = async (room: Room) => {
+    setIsResettingRoom(true);
+    playSound('confirm');
+    try {
+      const res = await fetch(`/api/rooms/${room.room_id}/reset-clean`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ staffMember: currentRole })
+      });
+      if (res.ok) {
+        playSound('success');
+        showLocalToast(`Room ${room.room_number} successfully cleaned and released for booking.`);
+        fetchBookings(); // Refreshes bookings and rooms list
+        setResetRoomConfirm(null);
+      } else {
+        const err = await res.json();
+        showLocalToast(err.error || 'Failed to reset room status.', 'error');
+      }
+    } catch (e) {
+      console.warn("Could not reset room clean status:", e);
+      showLocalToast("Network error. Please try again.", 'error');
+    } finally {
+      setIsResettingRoom(false);
     }
   };
 
@@ -115,6 +170,8 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
         playSound('success');
         setIdVerified(true);
         fetchBookings();
+        // Immediately notify GuestDashboard of the verification/check-in status change
+        broadcastBookingStatusChange();
       }
     } catch (e) {
       console.warn("Could not verify booking documents:", e);
@@ -213,18 +270,7 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
   const isCancellable = (status: Booking['booking_status']) =>
     status === 'Pending' || status === 'Confirmed' || status === 'Verified';
 
-  const getLocalDateString = (d: Date) => {
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd}`;
-  };
-  
-  const todayStr = getLocalDateString(new Date());
-
   // Statistics calculation:
-  const todayCheckIns = bookings.filter(b => b.check_in_date === todayStr && !b.is_archived).length;
-  const todayCheckOuts = bookings.filter(b => b.check_out_date === todayStr && !b.is_archived).length;
   const activeGuestsCount = bookings.filter(b => b.booking_status === 'Checked-In' && !b.is_archived).length;
   const availableRoomsCount = rooms.filter(r => r.room_status === 'Available').length;
   const occupiedRoomsCount = rooms.filter(r => r.room_status === 'Occupied').length;
@@ -343,6 +389,17 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
         >
           🔑 Create & Manage Guest Access
         </button>
+        <button
+          onClick={() => { playSound('tap'); setActiveTab('rooms'); }}
+          className={`px-5 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 cursor-pointer ${
+            activeTab === 'rooms'
+              ? 'border-[#003366] text-[#003366]'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
+          }`}
+          id="btn_tab_rooms"
+        >
+          🧹 Room Inventory & Clean Status
+        </button>
       </div>
 
       {activeTab === 'credentials' && (
@@ -361,29 +418,7 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
       {activeTab === 'stays' && (
         <>
           {/* Quick Statistics Cards Grid */}
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
-            <div className="bg-white/90 backdrop-blur border border-slate-200/80 p-4 rounded-2xl shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
-              <div className="flex items-center justify-between text-slate-400">
-                <span className="text-[10px] font-extrabold uppercase tracking-wider">Today's Check-Ins</span>
-                <Calendar className="h-4 w-4 text-indigo-500" />
-              </div>
-              <div className="mt-2">
-                <div className="text-2xl font-black text-[#003366]">{todayCheckIns}</div>
-                <p className="text-[9px] text-slate-500 font-medium mt-0.5">Stays starting today</p>
-              </div>
-            </div>
-
-            <div className="bg-white/90 backdrop-blur border border-slate-200/80 p-4 rounded-2xl shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
-              <div className="flex items-center justify-between text-slate-400">
-                <span className="text-[10px] font-extrabold uppercase tracking-wider">Today's Check-Outs</span>
-                <LogOut className="h-4 w-4 text-amber-500" />
-              </div>
-              <div className="mt-2">
-                <div className="text-2xl font-black text-[#003366]">{todayCheckOuts}</div>
-                <p className="text-[9px] text-slate-500 font-medium mt-0.5">Stays ending today</p>
-              </div>
-            </div>
-
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
             <div className="bg-white/90 backdrop-blur border border-slate-200/80 p-4 rounded-2xl shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
               <div className="flex items-center justify-between text-slate-400">
                 <span className="text-[10px] font-extrabold uppercase tracking-wider">Active Guests</span>
@@ -782,6 +817,198 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
         </>
       )}
 
+      {activeTab === 'rooms' && (
+        <div className="space-y-6" id="rooms_management_section">
+          {/* Header Description */}
+          <div className="bg-gradient-to-r from-[#003366] to-[#001f3f] text-white p-6 rounded-3xl border border-[#D4AF37]/30 shadow-lg">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+              <div className="space-y-2 text-left">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold text-[#F9D976] bg-[#D4AF37]/10 border border-[#D4AF37]/35 uppercase tracking-wider">
+                  <Sparkles className="h-3.5 w-3.5 text-[#D4AF37]" />
+                  Room Status & Clean Management
+                </span>
+                <h3 className="text-xl md:text-2xl font-black font-heading tracking-wide uppercase">
+                  Chamber Inventory Reset Controller
+                </h3>
+                <p className="text-xs text-slate-200 max-w-2xl leading-relaxed">
+                  Reset chambers to Available after guest check-out, clear housekeeping locks, and update real-time availability.
+                </p>
+              </div>
+
+              <button
+                onClick={fetchBookings}
+                disabled={isLoading}
+                className="shrink-0 bg-white/10 hover:bg-white/20 text-[#F9D976] hover:text-[#fff] text-xs font-bold px-4 py-2.5 rounded-xl border border-white/15 transition-all flex items-center gap-1.5 cursor-pointer uppercase shadow"
+              >
+                <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+                <span>Refresh Inventory</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Quick Filters */}
+          <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-md flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] uppercase font-bold tracking-wider font-mono text-slate-400">Filter Status:</span>
+              <div className="flex flex-wrap gap-1">
+                {['All', 'Available', 'Occupied', 'Dirty', 'Maintenance'].map((status) => {
+                  const isActive = statusFilter === status;
+                  return (
+                    <button
+                      key={status}
+                      onClick={() => { playSound('tap'); setStatusFilter(status); }}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer border ${
+                        isActive 
+                          ? 'bg-[#003366] text-[#F9D976] border-[#D4AF37]' 
+                          : 'bg-slate-50 text-slate-500 hover:text-slate-800 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {status}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="relative w-full sm:w-64">
+              <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                <Search className="h-4 w-4" />
+              </span>
+              <input
+                type="text"
+                placeholder="Search Room Number or Tier..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full text-xs pl-9 pr-4 py-2 bg-slate-50 border rounded-xl focus:outline-none focus:border-[#003366] focus:bg-white transition-all"
+              />
+            </div>
+          </div>
+
+          {/* Room Inventory Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {rooms
+              .filter((room) => {
+                const matchesStatus = statusFilter === 'All' || room.room_status === statusFilter;
+                const matchesSearch = searchQuery.trim() === '' || 
+                  room.room_number.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                  room.room_type.toLowerCase().includes(searchQuery.toLowerCase());
+                return matchesStatus && matchesSearch;
+              })
+              .map((room) => {
+                const isRoomAvailable = room.room_status === 'Available';
+                const isRoomDirty = room.room_status === 'Dirty';
+                const isRoomOccupied = room.room_status === 'Occupied';
+                const isRoomMaintenance = room.room_status === 'Maintenance';
+
+                return (
+                  <div 
+                    key={room.room_id} 
+                    className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all flex flex-col justify-between overflow-hidden"
+                  >
+                    <div>
+                      {/* Image Banner */}
+                      <div className="relative h-40 bg-slate-900 w-full">
+                        <RoomImage 
+                          src={room.image_url} 
+                          alt={room.room_type} 
+                          category={room.room_type}
+                          width={400}
+                          quality={80}
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute top-3 left-3 bg-[#001f3f]/90 backdrop-blur-sm p-1 px-2.5 rounded-lg text-white font-mono text-xs font-bold border border-[#D4AF37]/35">
+                          Room {room.room_number}
+                        </div>
+                        <div className="absolute bottom-3 left-3 bg-[#003366]/90 backdrop-blur-sm text-[#F9D976] text-[9px] font-extrabold tracking-wider uppercase p-0.5 px-2 rounded border border-[#D4AF37]/30">
+                          {room.room_type}
+                        </div>
+                      </div>
+
+                      {/* Info Panel */}
+                      <div className="p-4 space-y-3 text-left">
+                        <div className="flex justify-between items-center">
+                          <span className="text-[10px] text-slate-450 font-mono">Max Capacity: {room.capacity} Pax</span>
+                          <span className={`px-2 py-0.5 rounded text-[9px] uppercase font-bold tracking-wider border ${
+                            isRoomAvailable 
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-250' 
+                              : isRoomDirty
+                              ? 'bg-amber-50 text-amber-800 border-amber-250 animate-pulse'
+                              : isRoomOccupied
+                              ? 'bg-blue-50 text-blue-800 border-blue-200'
+                              : 'bg-rose-50 text-rose-800 border-rose-200'
+                          }`}>
+                            {room.room_status}
+                          </span>
+                        </div>
+
+                        <div className="text-xs text-slate-500 font-sans">
+                          Price tariff: <strong className="text-slate-800 font-mono">₹{room.price_per_night.toLocaleString('en-IN')}</strong> / night
+                        </div>
+
+                        {/* Description / Status Indicators */}
+                        <div className="bg-slate-50 border border-slate-150 p-2.5 rounded-xl text-[11px] leading-normal text-slate-600 font-sans">
+                          {isRoomAvailable && (
+                            <span className="text-emerald-700 font-semibold flex items-center gap-1.5">
+                              <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+                              <span>Ready for new guest booking. No freeze locks active.</span>
+                            </span>
+                          )}
+                          {isRoomDirty && (
+                            <span className="text-amber-700 font-semibold flex items-center gap-1.5">
+                              <Clock className="h-3.5 w-3.5 shrink-0" />
+                              <span>Housekeeping pending clean-up request in queue.</span>
+                            </span>
+                          )}
+                          {isRoomOccupied && (
+                            <span className="text-blue-700 font-semibold flex items-center gap-1.5">
+                              <Home className="h-3.5 w-3.5 shrink-0" />
+                              <span>Guest is currently checked-in. Live active stay.</span>
+                            </span>
+                          )}
+                          {isRoomMaintenance && (
+                            <span className="text-rose-700 font-semibold flex items-center gap-1.5">
+                              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                              <span>Room is under maintenance. Service lock active.</span>
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Reset Button */}
+                    <div className="p-4 pt-0">
+                      <button
+                        onClick={() => { playSound('tap'); setResetRoomConfirm(room); }}
+                        className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                          !isRoomAvailable 
+                            ? 'bg-[#003366]/10 hover:bg-[#003366] hover:text-white border border-[#003366]/30 text-[#003366]' 
+                            : 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
+                        }`}
+                        disabled={isRoomAvailable}
+                      >
+                        <span>Mark Room Clean & Available</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+
+          {/* Empty state when no rooms match */}
+          {rooms.filter((room) => {
+            const matchesStatus = statusFilter === 'All' || room.room_status === statusFilter;
+            const matchesSearch = searchQuery.trim() === '' || 
+              room.room_number.toLowerCase().includes(searchQuery.toLowerCase()) || 
+              room.room_type.toLowerCase().includes(searchQuery.toLowerCase());
+            return matchesStatus && matchesSearch;
+          }).length === 0 && (
+            <div className="py-20 text-center text-xs text-slate-450">
+              No chambers match the current filter selection.
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ══════════════════════════════════════════════════════════════════════ */}
       {/* CANCEL BOOKING CONFIRMATION MODAL                                     */}
       {/* ══════════════════════════════════════════════════════════════════════ */}
@@ -902,6 +1129,75 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
                 )}
               </div>
 
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      {/* ROOM CLEAN RESET CONFIRMATION MODAL                                    */}
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      {resetRoomConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-[#D4AF37]/35 overflow-hidden text-center p-6 space-y-6">
+            <div>
+              <span className="bg-amber-100 text-amber-800 text-[10px] font-mono uppercase font-bold px-2.5 py-1 rounded-full">
+                Inventory Status Override
+              </span>
+              <h3 className="text-lg font-bold text-slate-900 font-heading mt-2">
+                Release Chamber Inventory
+              </h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Are you sure you want to mark this room as cleaned and available for booking?
+              </p>
+            </div>
+
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-left text-xs space-y-2">
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-slate-500 font-medium">Chamber Number:</span>
+                <strong className="text-slate-900">Room {resetRoomConfirm.room_number}</strong>
+              </div>
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-slate-500 font-medium">Room Category:</span>
+                <strong className="text-slate-900">{resetRoomConfirm.room_type}</strong>
+              </div>
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-slate-500 font-medium">Current Status:</span>
+                <strong className="text-amber-700 uppercase font-mono">{resetRoomConfirm.room_status}</strong>
+              </div>
+              <div className="text-[10px] text-slate-400 leading-relaxed font-sans pt-1">
+                Confirming this action will update the status index, mark all pending housekeeping tasks for this room as complete, delete active stay records, and release blocked dates in the availability calendar starting today.
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-1">
+              <button
+                onClick={() => setResetRoomConfirm(null)}
+                disabled={isResettingRoom}
+                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold px-4 py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
+              >
+                No, Go Back
+              </button>
+
+              <button
+                onClick={() => handleResetRoomClean(resetRoomConfirm)}
+                disabled={isResettingRoom}
+                className="flex-1 bg-[#003366] hover:brightness-110 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md"
+                id="btn_confirm_reset_clean"
+              >
+                {isResettingRoom ? (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    <span>Processing...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckSquare className="h-3.5 w-3.5" />
+                    <span>Yes, Confirm Clean</span>
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>

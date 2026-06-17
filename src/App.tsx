@@ -58,7 +58,7 @@ export default function App() {
   // Navigation for dynamic home navigation triggers
   const [landingPage, setLandingPage] = useState<'home' | 'guest' | 'manager'>('home');
   
-  // Tab controller for Admin, Manager and Front Desk
+  // Tab controller for Manager and Front Desk
   const [dashboardTab, setDashboardTab] = useState<'operations' | 'messaging'>('operations');
 
   // Stays checking search filters
@@ -81,8 +81,8 @@ export default function App() {
   const [isSubmittingCorp, setIsSubmittingCorp] = useState(false);
   const [corpSuccess, setCorpSuccess] = useState(false);
 
-  const fetchRooms = async () => {
-    setIsLoadingRooms(true);
+  const fetchRooms = async (silent = false) => {
+    if (!silent) setIsLoadingRooms(true);
     try {
       const res = await fetch('/api/rooms');
       if (res.ok) {
@@ -92,12 +92,18 @@ export default function App() {
     } catch (e) {
       console.warn("Could not query available chambers:", e);
     } finally {
-      setIsLoadingRooms(false);
+      if (!silent) setIsLoadingRooms(false);
     }
   };
 
   useEffect(() => {
     fetchRooms();
+    // Poll room availability every 45 seconds — room statuses rarely change
+    // in real-time and 4-second polling was causing severe request spam.
+    const interval = setInterval(() => {
+      fetchRooms(true);
+    }, 45000);
+    return () => clearInterval(interval);
   }, [currentRole]);
 
 
@@ -244,7 +250,7 @@ export default function App() {
                       </div>
                       <h3 className="text-lg font-bold text-slate-900 uppercase font-heading tracking-wide">Manager Operations Suite</h3>
                       <p className="text-xs text-slate-600 leading-relaxed">
-                        Authorized executive portal for Hotel Managers, Front Desk Agents & Administrators to review GST audit tables, coordinate guest services, and resolve complaints.
+                        Authorized executive portal for Hotel Managers, Front Desk Agents & Management Staff to review GST audit tables, coordinate guest services, and resolve complaints.
                       </p>
                     </div>
                     <button
@@ -719,7 +725,7 @@ export default function App() {
        )}
 
         {/* Sub-view switcher for operational roles */}
-        {['Front Desk Staff', 'Hotel Manager', 'Administrator'].includes(currentRole) && (
+        {['Front Desk Staff', 'Hotel Manager'].includes(currentRole) && (
           <div className="mb-6 bg-white p-3.5 rounded-2xl border border-[#D4AF37]/35 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
             <div>
               <span className="text-[10px] text-[#003366] font-mono font-bold uppercase tracking-wider block">Unified Management Console</span>
@@ -752,7 +758,7 @@ export default function App() {
           </div>
         )}
 
-        {dashboardTab === 'messaging' && ['Front Desk Staff', 'Hotel Manager', 'Administrator'].includes(currentRole) ? (
+        {dashboardTab === 'messaging' && ['Front Desk Staff', 'Hotel Manager'].includes(currentRole) ? (
           <motion.div
             initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }}
             className="space-y-6"
@@ -826,24 +832,6 @@ export default function App() {
                   </h2>
                   <p className="text-xs text-slate-600 mt-1">
                     Monitor Indian Rupee billing summaries, accept corporate inquiries, or query custom tables.
-                  </p>
-                </div>
-
-                <AdminDashboard currentRole={currentRole} />
-              </motion.div>
-            )}
-
-            {currentRole === 'Administrator' && (
-              <motion.div 
-                initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }}
-                className="space-y-6"
-              >
-                <div className="border-b pb-4">
-                  <h2 className="text-2xl font-bold tracking-tight text-slate-950 font-heading">
-                    System Administrator Command Panel
-                  </h2>
-                  <p className="text-xs text-slate-600 mt-1">
-                    Full relational MySQL tables inspect terminal, custom schema updates, and live metrics.
                   </p>
                 </div>
 

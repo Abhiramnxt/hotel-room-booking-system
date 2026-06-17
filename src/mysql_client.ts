@@ -14,7 +14,10 @@ export function initMysqlPool() {
     database: process.env.MYSQL_DATABASE,
     waitForConnections: true,
     connectionLimit: 10,
-    queueLimit: 0
+    queueLimit: 0,
+    ssl: process.env.MYSQL_SSL === 'true'
+      ? { rejectUnauthorized: false }
+      : undefined
   });
   return pool;
 }
@@ -38,4 +41,9 @@ export async function closePool() {
     await pool.end();
     pool = null;
   }
+}
+
+export function getPool(): mysql.Pool {
+  if (!pool) initMysqlPool();
+  return pool!;
 }

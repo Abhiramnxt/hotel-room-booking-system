@@ -19,7 +19,6 @@ CREATE TABLE IF NOT EXISTS guest_accounts (
   mobile_number VARCHAR(50),
   email VARCHAR(255),
   stay_duration VARCHAR(100),
-  room_preference VARCHAR(255),
   is_activated TINYINT(1),
   first_login_password_changed TINYINT(1),
   created_at DATETIME

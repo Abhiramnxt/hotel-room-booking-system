@@ -1,12 +1,66 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
+/* ==========================================================================
+   GLOBAL FONT SIZE ENHANCEMENT — Named Tailwind Scale
+   Bumps Tailwind v4 named text-size tokens by ~1px for better readability.
+   text-xs : 12px → 13px (0.8125rem)
+   text-sm : 14px → 15px (0.9375rem)
+   text-base: 16px (unchanged — headings/body already comfortable)
+   ========================================================================== */
+@theme {
+  --text-xs:   0.8125rem; /* was 0.75rem  = 12px, now 13px */
+  --text-sm:   0.9375rem; /* was 0.875rem = 14px, now 15px */
+}
 
-/* @theme {
+/* @theme — fonts (preserved, not re-activated to avoid breaking custom font-vars)
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-heading: "Outfit", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
-} */
+*/
+
+/* ==========================================================================
+   GLOBAL FONT SIZE ENHANCEMENT — Arbitrary Pixel Classes
+   CSS attribute-contains selectors remap every text-[Npx] Tailwind arbitrary
+   class upward by 1px.  These rules apply universally across ALL components
+   without touching a single component file.
+
+   Before → After:
+     text-[7px]  →  8px
+     text-[8px]  →  9px
+     text-[9px]  → 10px
+     text-[10px] → 11px
+     text-[11px] → 12px
+   ========================================================================== */
+[class~="text-[7px]"],
+[class*=" text-[7px]"],
+[class*="text-[7px] "] {
+  font-size: 8px !important;
+}
+
+[class~="text-[8px]"],
+[class*=" text-[8px]"],
+[class*="text-[8px] "] {
+  font-size: 9px !important;
+}
+
+[class~="text-[9px]"],
+[class*=" text-[9px]"],
+[class*="text-[9px] "] {
+  font-size: 10px !important;
+}
+
+[class~="text-[10px]"],
+[class*=" text-[10px]"],
+[class*="text-[10px] "] {
+  font-size: 11px !important;
+}
+
+[class~="text-[11px]"],
+[class*=" text-[11px]"],
+[class*="text-[11px] "] {
+  font-size: 12px !important;
+}
 
 body {
   font-family: var(--font-sans);
@@ -611,4 +665,52 @@ body.dark {
 .dark .bg-slate-100 p-1,
 .dark .bg-slate-100 {
   background-color: #0c1221 !important;
+}
+
+/* ==========================================================================
+   GUEST SERVICES DASHBOARD — TABLE OVERFLOW & LAYOUT FIX
+   ========================================================================== */
+
+/* Scrollable wrapper that prevents table from bursting out of the card */
+.gs-table-scroll-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 1.5rem; /* match rounded-3xl */
+}
+
+/* Fixed-layout table so column widths are respected and content wraps */
+.gs-table-fixed {
+  table-layout: fixed;
+  width: 100%;
+  border-collapse: collapse;
+}
+
+/* Column width allocation (totals must = 100%) */
+.gs-col-id       { width: 7%; }
+.gs-col-room     { width: 7%; }
+.gs-col-guest    { width: 11%; }
+.gs-col-type     { width: 14%; }
+.gs-col-details  { width: 20%; }
+.gs-col-time     { width: 10%; }
+.gs-col-priority { width: 8%; }
+.gs-col-status   { width: 10%; }
+.gs-col-actions  { width: 13%; }
+
+/* Details cell — allow text to wrap across multiple lines */
+.gs-cell-details {
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  line-height: 1.45;
+}
+
+/* Action buttons cell — prevent buttons from stacking weirdly */
+.gs-cell-actions {
+  white-space: normal;
+}
+
+/* Dark mode overrides for the new table containers */
+.dark .gs-table-scroll-wrapper {
+  background-color: #111827;
 }

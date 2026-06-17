@@ -3,799 +3,24 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import fs from 'fs';
-import path from 'path';
 import { 
   Guest, Room, Booking, Payment, HousekeepingTask, 
   RoomServiceRequest, Complaint, Feedback, CorporateBooking, 
-  Staff, RoomAvailability, SqlQueryLog, GuestAccount, CommunicationLog
+  Staff, SqlQueryLog, GuestAccount, CommunicationLog, RoomAvailability
 } from './types.js';
-import { getRoomUniqueGalleryUrls } from './image_data.js';
-import { initMysqlPool, query, execute } from './mysql_client';
+import { initMysqlPool, query, execute, getPool } from './mysql_client.js';
 
-const useMySQL = !!process.env.MYSQL_HOST;
-
-// Define DB persistence path
-const isVercel = process.env.VERCEL === '1' || !!process.env.VERCEL;
-const COMMITTED_DB_PATH = path.join(process.cwd(), 'mock_mysql_data.json');
-const DB_FILE_PATH = isVercel
-  ? path.join('/tmp', 'mock_mysql_data.json')
-  : COMMITTED_DB_PATH;
-
-// Interface for DB state
-export interface DatabaseState {
-  guests: Guest[];
-  rooms: Room[];
-  bookings: Booking[];
-  payments: Payment[];
-  housekeeping: HousekeepingTask[];
-  room_service_requests: RoomServiceRequest[];
-  complaints: Complaint[];
-  feedback: Feedback[];
-  corporate_bookings: CorporateBooking[];
-  staff: Staff[];
-  room_availability: RoomAvailability[];
-  guest_accounts: GuestAccount[];
-  communication_logs: CommunicationLog[];
-}
-
-// Initial records to bootstrap the operational database
-const INITIAL_STAFF: Staff[] = [
-  { staff_id: 1, staff_name: "Rahul Sharma", department: "Front Desk", role: "Manager", email: "rahul.desk@sai-nirvana.com", phone_number: "+91 9876543210" },
-  { staff_id: 2, staff_name: "Amit Patel", department: "Housekeeping", role: "Supervisor", email: "amit.clean@sai-nirvana.com", phone_number: "+91 9876543211" },
-  { staff_id: 3, staff_name: "Pooja Roy", department: "Administration", role: "General Admin", email: "pooja.admin@sai-nirvana.com", phone_number: "+91 9876543212" },
-  { staff_id: 4, staff_name: "Karan Singh", department: "Housekeeping", role: "Cleaner", email: "karan.k@sai-nirvana.com", phone_number: "+91 9876543213" },
-];
-
-const GENERATED_ROOMS: Room[] = [];
-
-// Base images for generation
-const STANDARD_IMAGES = [
-  "https://images.unsplash.com/photo-1598928506311-c55ded91a20c",
-  "https://images.unsplash.com/photo-1505691938895-1758d7feb511",
-  "https://images.unsplash.com/photo-1584622650111-993a426fbf0a",
-  "https://images.unsplash.com/photo-1445019980597-93fa8acb246c",
-  "https://images.unsplash.com/photo-1618773928121-c32242e63f39",
-  "https://images.unsplash.com/photo-1566665797739-1674de7a421a",
-  "https://images.unsplash.com/photo-1582719508461-905c673771fd",
-  "https://images.unsplash.com/photo-1590490360182-c33d57733427",
-  "https://images.unsplash.com/photo-1540518614846-7eded433c457",
-  "https://images.unsplash.com/photo-1600566753190-17f0baa2a6c3"
-];
-
-const DELUXE_IMAGES = [
-  "https://images.unsplash.com/photo-1618773928121-c32242e63f39",
-  "https://images.unsplash.com/photo-1600566753376-12c8ab7fb75b",
-  "https://images.unsplash.com/photo-1582719508461-905c673771fd",
-  "https://images.unsplash.com/photo-1590490360182-c33d57733427",
-  "https://images.unsplash.com/photo-1591088398332-8a7791972843",
-  "https://images.unsplash.com/photo-1505693416388-ac5ce068fe85",
-  "https://images.unsplash.com/photo-1540518614846-7eded433c457",
-  "https://images.unsplash.com/photo-1566665797739-1674de7a421a",
-  "https://images.unsplash.com/photo-1582719478250-c89cae4dc85b",
-  "https://images.unsplash.com/photo-1600566753190-17f0baa2a6c3"
-];
-
-const EXECUTIVE_IMAGES = [
-  "https://images.unsplash.com/photo-1578683010236-d716f9a3f461",
-  "https://images.unsplash.com/photo-1631049307264-da0ec9d70304",
-  "https://images.unsplash.com/photo-1584622781564-1d987f7333c1",
-  "https://images.unsplash.com/photo-1618773928121-c32242e63f39",
-  "https://images.unsplash.com/photo-1590490360182-c33d57733427",
-  "https://images.unsplash.com/photo-1582719508461-905c673771fd",
-  "https://images.unsplash.com/photo-1600566753376-12c8ab7fb75b",
-  "https://images.unsplash.com/photo-1578683010236-d716f9a3f461",
-  "https://images.unsplash.com/photo-1505691938895-1758d7feb511",
-  "https://images.unsplash.com/photo-1445019980597-93fa8acb246c"
-];
-
-const PRESIDENTIAL_IMAGES = [
-  "https://images.unsplash.com/photo-1611891405118-4783a66d1160",
-  "https://images.unsplash.com/photo-1590490360182-c33d57733427",
-  "https://images.unsplash.com/photo-1600566753376-12c8ab7fb75b",
-  "https://images.unsplash.com/photo-1578683010236-d716f9a3f461",
-  "https://images.unsplash.com/photo-1631049307264-da0ec9d70304",
-  "https://images.unsplash.com/photo-1582719508461-905c673771fd",
-  "https://images.unsplash.com/photo-1598928506311-c55ded91a20c",
-  "https://images.unsplash.com/photo-1505691938895-1758d7feb511",
-  "https://images.unsplash.com/photo-1445019980597-93fa8acb246c",
-  "https://images.unsplash.com/photo-1582719478250-c89cae4dc85b"
-];
-
-const VIEWS = ["Garden View", "Poolside View", "Plaza Frontage", "Dwarka Skyline View", "Atrium Oasis", "Forest Edge", "City Panorama"];
-const STANDARD_NAMES = ["Cozy Cabin", "Alpine Cabin", "Compact Cabin", "Hideaway Cabin", "Soloist Cabin", "Zen Cabin", "Nature Cabin", "Urban Cabin", "Vista Cabin", "Nest Cabin", "Pine Cabin", "Hearth Cabin", "Refuge Cabin"];
-const DELUXE_NAMES = ["Grand Deluxe", "Oasis Deluxe", "Signature Deluxe", "Zen Deluxe", "Orchard Deluxe", "Saffron Deluxe", "Royal Heritage Deluxe", "Meridian Deluxe", "Aura Deluxe", "Plaza Deluxe", "Sands Deluxe", "Valley Deluxe", "Urbanite Deluxe"];
-const EXECUTIVE_NAMES = ["Elite Suite", "Imperial Suite", "Summit Suite", "Sovereign Suite", "Club Lounge Suite", "Regency Suite", "Connoisseur Suite", "Aero Suite", "Metropolis Suite", "Aerie Suite", "Governor's Suite", "Bespoke Suite", "Diplomat Suite"];
-const PRESIDENTIAL_NAMES = ["Maharaja Penthouse", "Kohinoor Royal Suite", "Viceroy Grand Suite", "Crown Sovereign Penthouse", "Antara Celestial Presidential", "Lotus Heaven Suite", "Nirvana Sanctuary", "Skyline Overlook Penthouse", "Infinity Haven Suite", "Oasis Regal Pavillion", "Mayur Royal Suite", "Grand Imperial Mansion", "Apex Sky Residence"];
-
-// Helper to make unique images lists for each room
-function makeGallery(images: string[], roomId: number): string[] {
-  return images.map((img, idx) => `${img}?auto=format&fit=crop&w=1200&q=80&sig=${roomId * 100 + idx}`);
-}
-
-// Generate Standard Cabins (13 rooms)
-for (let i = 0; i < 13; i++) {
-  const roomId = i + 1;
-  const roomNum = (101 + i).toString();
-  const price = 2500 + i * 160; 
-  const isAvailable = [0, 2, 4, 5, 7, 8, 10, 11, 12].includes(i); 
-  const status = isAvailable ? 'Available' : (i % 3 === 0 ? 'Occupied' : (i % 3 === 1 ? 'Dirty' : 'Maintenance'));
-  const gallery = getRoomUniqueGalleryUrls('Standard', i);
-  
-  GENERATED_ROOMS.push({
-    room_id: roomId,
-    room_number: roomNum,
-    room_type: 'Standard',
-    room_name: `Standard ${STANDARD_NAMES[i % STANDARD_NAMES.length]} ${roomNum}`,
-    capacity: 2,
-    amenities: ["Air Conditioning", "Free Wi-Fi", "Smart TV", "Hot Water Kettle", "Bathroom Amenities", "Safe Locker", "Workspace"],
-    price_per_night: price,
-    room_status: status as any,
-    image_url: gallery[0],
-    gallery_images: gallery,
-    description: `A comfortable, well-appointed Standard Cabin offering exceptional value, space-efficient luxury, and premium linen at Sai Nirvana Plaza. Designed specifically for corporate solo travelers and couples seeking a quiet refuge.`,
-    size_sqft: 280 + (i * 10),
-    bed_type: i % 2 === 0 ? "Queen Sized Bed" : "Double Twin Beds",
-    view_type: VIEWS[i % VIEWS.length],
-    reviews: [
-      { reviewer: "Amit Verma", rating: 5, comment: "Crisp cooling and super fast high speed Wi-Fi. Perfect cozy cabin stay!", date: "2026-05-15" },
-      { reviewer: "Sneha Nair", rating: 4, comment: "Very clean bathrooms, great room service and support from reception.", date: "2026-05-22" }
-    ],
-    created_at: new Date().toISOString()
-  });
-}
-
-// Generate Premium Deluxe (13 rooms)
-for (let i = 0; i < 13; i++) {
-  const roomId = i + 14;
-  const roomNum = (201 + i).toString();
-  const price = 5000 + i * 280; 
-  const isAvailable = [0, 2, 3, 5, 6, 8, 9, 11, 12].includes(i);
-  const status = isAvailable ? 'Available' : (i % 3 === 0 ? 'Occupied' : (i % 3 === 1 ? 'Dirty' : 'Maintenance'));
-  const gallery = getRoomUniqueGalleryUrls('Deluxe', i);
-
-  GENERATED_ROOMS.push({
-    room_id: roomId,
-    room_number: roomNum,
-    room_type: 'Deluxe', 
-    room_name: `Premium ${DELUXE_NAMES[i % DELUXE_NAMES.length]} ${roomNum}`,
-    capacity: 3,
-    amenities: ["Air Conditioning", "Smart TV", "Free Wi-Fi", "Mini Refrigerator", "Balcony", "Coffee Maker", "Workspace", "Safe Locker", "Room Service"],
-    price_per_night: price,
-    room_status: status as any,
-    image_url: gallery[0],
-    gallery_images: gallery,
-    description: `Indulge in spacious comfort and custom wooden design details in our Premium Deluxe rooms. Each chamber opens to private balconies offering expansive resort views, modern mini coffee stations, and highly sanitized premium workspaces.`,
-    size_sqft: 450 + (i * 15),
-    bed_type: "King Sized Bed",
-    view_type: VIEWS[(i + 2) % VIEWS.length],
-    reviews: [
-      { reviewer: "Rohan Kapoor", rating: 5, comment: "The balcony view is outstanding. Loved the French-press coffee maker setup!", date: "2026-05-18" },
-      { reviewer: "Meera Das", rating: 4, comment: "Spacious layout, very luxurious bedding. Instant checkin support.", date: "2026-05-28" }
-    ],
-    created_at: new Date().toISOString()
-  });
-}
-
-// Generate Executive Suite (13 rooms)
-for (let i = 0; i < 13; i++) {
-  const roomId = i + 27;
-  const roomNum = (301 + i).toString();
-  const price = 9000 + i * 480; 
-  const isAvailable = [0, 1, 3, 4, 6, 7, 9, 10, 12].includes(i);
-  const status = isAvailable ? 'Available' : (i % 3 === 0 ? 'Occupied' : (i % 3 === 1 ? 'Dirty' : 'Maintenance'));
-  const gallery = getRoomUniqueGalleryUrls('Executive Suite', i);
-
-  GENERATED_ROOMS.push({
-    room_id: roomId,
-    room_number: roomNum,
-    room_type: 'Executive Suite',
-    room_name: `Executive Suite - ${EXECUTIVE_NAMES[i % EXECUTIVE_NAMES.length]} ${roomNum}`,
-    capacity: 4,
-    amenities: ["Air Conditioning", "Free Wi-Fi", "Two Smart TVs", "Living Area", "Bathtub", "Mini Refrigerator", "Balcony", "Coffee Maker", "Safe Locker", "Room Service", "Workspace"],
-    price_per_night: price,
-    room_status: status as any,
-    image_url: gallery[0],
-    gallery_images: gallery,
-    description: `Designed for executives and families, our Executive Suites integrate a completely separated master bedroom and an elegant living/reception lounge. Masterfully prepared with deep porcelain bathtubs, private workspace niches, and premium room service amenities.`,
-    size_sqft: 850 + (i * 20),
-    bed_type: "Grand King Premium Sized Bed",
-    view_type: VIEWS[(i + 4) % VIEWS.length],
-    reviews: [
-      { reviewer: "Vijay Singhal", rating: 5, comment: "Perfect for family. Separate lounge allows and premium sound system was superb.", date: "2026-05-11" },
-      { reviewer: "Kriti Sen", rating: 5, comment: "Excellent executive bathtub, clean linen and outstanding in-room menu offerings.", date: "2026-06-01" }
-    ],
-    created_at: new Date().toISOString()
-  });
-}
-
-// Generate Presidential Suite (13 rooms)
-for (let i = 0; i < 13; i++) {
-  const roomId = i + 40;
-  const roomNum = (401 + i).toString();
-  const price = 18000 + i * 2600; 
-  const isAvailable = [0, 1, 2, 4, 5, 7, 8, 9, 11, 12].includes(i);
-  const status = isAvailable ? 'Available' : (i % 3 === 0 ? 'Occupied' : (i % 3 === 1 ? 'Dirty' : 'Maintenance'));
-  const gallery = getRoomUniqueGalleryUrls('Presidential Suite', i);
-
-  GENERATED_ROOMS.push({
-    room_id: roomId,
-    room_number: roomNum,
-    room_type: 'Presidential Suite',
-    room_name: `Presidential Suite: ${PRESIDENTIAL_NAMES[i % PRESIDENTIAL_NAMES.length]} ${roomNum}`,
-    capacity: 6,
-    amenities: ["Air Conditioning", "Free Wi-Fi", "Three Smart TVs", "Spacious Lounge", "Private Jacuzzi", "24/7 Butler Service", "Mini Refrigerator", "Balcony", "Bathtub", "Safe Locker", "Workspace", "Room Service"],
-    price_per_night: price,
-    room_status: status as any,
-    image_url: gallery[0],
-    gallery_images: gallery,
-    description: `The pinnacle of luxury at Sai Nirvana Plaza. Experience state-of-the-art living dining area, bespoke hand-woven carpets, standard 24/7 designated private Butler attention, private wrap-around outdoor terrace, and a private Jacuzzi center with elite styling.`,
-    size_sqft: 1800 + (i * 50),
-    bed_type: "Super Emperor Royal Bed",
-    view_type: "Full Skyline Panorama View",
-    reviews: [
-      { reviewer: "Nandini Goel", rating: 5, comment: "Words fail to describe the luxury. The private Jacuzzi and butler support was beyond royal standard.", date: "2026-05-20" },
-      { reviewer: "Suresh Prabhu", rating: 5, comment: "Stayed here for a board meeting retreat. True architectural masterpiece.", date: "2026-06-03" }
-    ],
-    created_at: new Date().toISOString()
-  });
-}
-
-const INITIAL_ROOMS: Room[] = GENERATED_ROOMS;
-
-const INITIAL_GUESTS: Guest[] = [
-  { guest_id: 1, full_name: "Rajesh Kumar", email: "rajesh@gmail.com", mobile_number: "+91 9812345678", address: "Sector 15, Dwarka, New Delhi", government_id: "Aadhaar: 1234-5678-9012", created_at: new Date().toISOString() },
-  { guest_id: 2, full_name: "Priyanka Sharma", email: "priyanka@yahoo.com", mobile_number: "+91 9876543215", address: "Andheri West, Mumbai", government_id: "Passport: Z1234567", created_at: new Date().toISOString() },
-  { guest_id: 3, full_name: "Abhiram Thunikipati", email: "thunikipatiabhiram173@gmail.com", mobile_number: "+91 9876543210", address: "Premium Lounge Building, Dwarka", government_id: "Aadhaar: 7421-5678-9011", created_at: new Date().toISOString() },
-  // Additional guests booked under Abhiram's account (same email = same account owner)
-  { guest_id: 4, full_name: "Ravi Shankar", email: "thunikipatiabhiram173@gmail.com", mobile_number: "+91 9876543210", address: "Premium Lounge Building, Dwarka", government_id: "Aadhaar: 1111-2222-3333", created_at: new Date().toISOString() },
-  { guest_id: 5, full_name: "Kumar Reddy", email: "thunikipatiabhiram173@gmail.com", mobile_number: "+91 9876543210", address: "Premium Lounge Building, Dwarka", government_id: "Aadhaar: 4444-5555-6666", created_at: new Date().toISOString() }
-];
-
-const INITIAL_BOOKINGS: Booking[] = [
-  {
-    booking_id: 1, guest_id: 1, room_id: 1, check_in_date: "2026-06-03", check_out_date: "2026-06-07",
-    booking_status: "Checked-In", booking_source: "Website", assigned_staff: "Rahul Sharma",
-    created_at: new Date().toISOString()
-  },
-  {
-    booking_id: 2, guest_id: 2, room_id: 14, check_in_date: "2026-06-02", check_out_date: "2026-06-05",
-    booking_status: "Checked-In", booking_source: "Corporate", assigned_staff: "Rahul Sharma",
-    created_at: new Date().toISOString()
-  },
-  // Abhiram's account — 3 active bookings for 3 different guests (demonstrating multi-stay)
-  {
-    booking_id: 3, guest_id: 3, room_id: 16, check_in_date: "2026-06-04", check_out_date: "2026-06-09",
-    booking_status: "Checked-In", booking_source: "Website", assigned_staff: "Rahul Sharma",
-    created_at: new Date().toISOString()
-  },
-  {
-    booking_id: 4, guest_id: 4, room_id: 3, check_in_date: "2026-06-05", check_out_date: "2026-06-10",
-    booking_status: "Checked-In", booking_source: "Website", assigned_staff: "Rahul Sharma",
-    created_at: new Date().toISOString()
-  },
-  {
-    booking_id: 5, guest_id: 5, room_id: 5, check_in_date: "2026-06-06", check_out_date: "2026-06-11",
-    booking_status: "Checked-In", booking_source: "Website", assigned_staff: "Rahul Sharma",
-    created_at: new Date().toISOString()
-  },
-  // Historic Checked-Out Bookings for history and receipt validation
-  {
-    booking_id: 11, guest_id: 1, room_id: 2, check_in_date: "2026-05-12", check_out_date: "2026-05-15",
-    booking_status: "Checked-Out", booking_source: "Website", assigned_staff: "Rahul Sharma",
-    created_at: new Date().toISOString()
-  },
-  {
-    booking_id: 12, guest_id: 2, room_id: 15, check_in_date: "2026-05-18", check_out_date: "2026-05-22",
-    booking_status: "Checked-Out", booking_source: "Website", assigned_staff: "Aman Sen",
-    created_at: new Date().toISOString()
-  },
-  {
-    booking_id: 13, guest_id: 3, room_id: 27, check_in_date: "2026-05-20", check_out_date: "2026-05-23",
-    booking_status: "Checked-Out", booking_source: "Website", assigned_staff: "Rahul Sharma",
-    created_at: new Date().toISOString()
-  }
-];
-
-const INITIAL_PAYMENTS: Payment[] = [
-  { payment_id: 1, booking_id: 1, amount: 11200, gst_amount: 1344, payment_method: "UPI", payment_status: "Paid", transaction_reference: "TXN983218931221", payment_date: new Date().toISOString() },
-  { payment_id: 2, booking_id: 2, amount: 17700, gst_amount: 2700, payment_method: "Credit Card", payment_status: "Paid", transaction_reference: "TXN772183921009", payment_date: new Date().toISOString() },
-  { payment_id: 3, booking_id: 3, amount: 29500, gst_amount: 4500, payment_method: "UPI", payment_status: "Paid", transaction_reference: "TXN551293021983", payment_date: new Date().toISOString() },
-  // Abhiram's multi-booking payments (Ravi and Kumar booked under same account)
-  { payment_id: 4, booking_id: 4, amount: 14336, gst_amount: 1536, payment_method: "UPI", payment_status: "Paid", transaction_reference: "TXN441293021101", payment_date: new Date().toISOString() },
-  { payment_id: 5, booking_id: 5, amount: 16240, gst_amount: 1740, payment_method: "Net Banking", payment_status: "Paid", transaction_reference: "TXN551293021103", payment_date: new Date().toISOString() },
-  // Historical Payments
-  { payment_id: 11, booking_id: 11, amount: 8400, gst_amount: 900, payment_method: "Net Banking", payment_status: "Paid", transaction_reference: "TXN110948572019", payment_date: new Date().toISOString() },
-  { payment_id: 12, booking_id: 12, amount: 23600, gst_amount: 3600, payment_method: "Credit Card", payment_status: "Paid", transaction_reference: "TXN120938472516", payment_date: new Date().toISOString() },
-  { payment_id: 13, booking_id: 13, amount: 31860, gst_amount: 4860, payment_method: "UPI", payment_status: "Paid", transaction_reference: "TXN130294812328", payment_date: new Date().toISOString() }
-];
-
-const INITIAL_FEEDBACK: Feedback[] = [
-  { feedback_id: 1, guest_id: 1, rating: 5, comments: "Exceptional welcome drinks and polite staff. Sai Nirvana Plaza is highly recommended for families!", submitted_at: new Date().toISOString() },
-  { feedback_id: 2, guest_id: 2, rating: 4, comments: "Very clean Executive Suite, prompt room details presentation. GST calculations were detailed.", submitted_at: new Date().toISOString() }
-];
-
-const INITIAL_COMPLAINTS: Complaint[] = [
-  { complaint_id: 1, guest_id: 1, complaint_category: "Wi-Fi", complaint_description: "Wi-Fi internet speed drops in bedroom area. Needs router check.", priority_level: "Medium", complaint_status: "Resolved", created_at: new Date().toISOString() }
-];
-
-// In-Memory state loaded from file or bootstrapped
-let state: DatabaseState = {
-  guests: INITIAL_GUESTS,
-  rooms: INITIAL_ROOMS,
-  bookings: INITIAL_BOOKINGS,
-  payments: INITIAL_PAYMENTS,
-  housekeeping: [],
-  room_service_requests: [],
-  complaints: INITIAL_COMPLAINTS,
-  feedback: INITIAL_FEEDBACK,
-  corporate_bookings: [],
-  staff: INITIAL_STAFF,
-  room_availability: [],
-  guest_accounts: [
-    {
-      account_id: 1,
-      guest_id_str: "SNP2026001",
-      username: "guest_snp001",
-      password_hash: "Temp@123",
-      full_name: "Abhiram Thunikipati",
-      mobile_number: "+91 9876543210",
-      email: "thunikipatiabhiram173@gmail.com",
-      stay_duration: "5 Nights",
-      room_preference: "Premium Deluxe",
-      is_activated: true,
-      first_login_password_changed: true,
-      created_at: new Date().toISOString()
-    },
-    {
-      account_id: 2,
-      guest_id_str: "SNP2026002",
-      username: "guest_snp002",
-      password_hash: "Temp@123",
-      full_name: "Rajesh Kumar",
-      mobile_number: "+91 9812345678",
-      email: "rajesh@gmail.com",
-      stay_duration: "4 Nights",
-      room_preference: "Standard Room",
-      is_activated: true,
-      first_login_password_changed: true,
-      created_at: new Date().toISOString()
-    },
-    {
-      account_id: 3,
-      guest_id_str: "SNP2026003",
-      username: "guest_snp003",
-      password_hash: "Temp@123",
-      full_name: "Priyanka Sharma",
-      mobile_number: "+91 9876543215",
-      email: "priyanka@yahoo.com",
-      stay_duration: "3 Nights",
-      room_preference: "Premium Deluxe",
-      is_activated: true,
-      first_login_password_changed: true,
-      created_at: new Date().toISOString()
-    }
-  ],
-  communication_logs: [
-    {
-      log_id: 1,
-      guest_id_str: "SNP2026001",
-      guest_name: "Abhiram Thunikipati",
-      communication_type: "Guest Login Credentials",
-      channel: "WhatsApp",
-      status_info: "🟢 Delivered Successfully",
-      timestamp: "2026-06-04T10:45:00Z",
-      staff_member: "Reception Admin",
-      delivery_attempts: 1,
-      failure_reason: ""
-    },
-    {
-      log_id: 2,
-      guest_id_str: "SNP2026001",
-      guest_name: "Abhiram Thunikipati",
-      communication_type: "Guest Login Credentials",
-      channel: "Email",
-      status_info: "🟢 Delivered Successfully",
-      timestamp: "2026-06-04T10:45:00Z",
-      staff_member: "Reception Admin",
-      delivery_attempts: 1,
-      failure_reason: ""
-    },
-    {
-      log_id: 3,
-      guest_id_str: "SNP2026001",
-      guest_name: "Abhiram Thunikipati",
-      communication_type: "Booking Confirmation",
-      channel: "WhatsApp",
-      status_info: "🟢 Delivered Successfully",
-      timestamp: "2026-06-04T10:45:00Z",
-      staff_member: "Reception Admin",
-      delivery_attempts: 1,
-      failure_reason: ""
-    }
-  ]
-};
-
-// SQL query logs
+// SQL query logs in memory for the Consistency Check Dashboard
 let queryLogs: SqlQueryLog[] = [];
 
-// Helper to save database state
-function isPathWritable(filePath: string) {
-  try {
-    const dir = path.dirname(filePath);
-    fs.accessSync(dir, fs.constants.W_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function writeStateFile(filePath: string) {
-  try {
-    fs.writeFileSync(filePath, JSON.stringify(state, null, 2));
-    console.log(`[Database] Successfully saved DB state to ${filePath}`);
-    return true;
-  } catch (err) {
-    console.error(`[Database] Error writing DB file to ${filePath}:`, err);
-    return false;
-  }
-}
-
-function saveDB() {
-  if (useMySQL) {
-    // Persist to MySQL asynchronously (fire-and-forget)
-    saveStateToMySQL().catch(err => console.error('[Database] Error saving state to MySQL:', err));
-    return;
-  }
-  const primarySaved = writeStateFile(DB_FILE_PATH);
-  if (isVercel && DB_FILE_PATH !== COMMITTED_DB_PATH && isPathWritable(COMMITTED_DB_PATH)) {
-    writeStateFile(COMMITTED_DB_PATH);
-  } else if (!primarySaved && DB_FILE_PATH !== COMMITTED_DB_PATH) {
-    writeStateFile(COMMITTED_DB_PATH);
-  }
-}
-
-function loadDBFromDisk() {
-  if (useMySQL) {
-    // In MySQL mode, we will load state from database during initDB
-    return;
-  }
-  let fileToRead = DB_FILE_PATH;
-
-  if (!fs.existsSync(fileToRead) && fs.existsSync(COMMITTED_DB_PATH)) {
-    if (isVercel) {
-      try {
-        fs.writeFileSync(fileToRead, fs.readFileSync(COMMITTED_DB_PATH));
-        console.log("[Database] Copied committed DB state into Vercel /tmp on startup.");
-      } catch (err) {
-        console.error("[Database] Failed to copy committed DB into /tmp:", err);
-      }
-    } else {
-      fileToRead = COMMITTED_DB_PATH;
-    }
-  }
-
-  if (!fs.existsSync(fileToRead)) {
-    console.warn(`[Database] DB file not found at ${fileToRead}. Using in-memory initial state.`);
-    return;
-  }
-
-  try {
-    const data = fs.readFileSync(fileToRead, 'utf-8');
-    state = JSON.parse(data);
-    console.log(`[Database] Loaded DB state from ${fileToRead}. Guest accounts: ${state.guest_accounts?.length ?? 0}, bookings: ${state.bookings?.length ?? 0}`);
-  } catch (err) {
-    console.error("Error reading mock DB file:", err);
-  }
-}
-
-async function saveStateToMySQL() {
-  try {
-    initMysqlPool();
-    // Simple sync: replace tables by deleting and reinserting state arrays
-    // Note: this strategy is acceptable for small demo data; replace with upserts for production.
-    await execute('START TRANSACTION');
-
-    // Guests
-    await execute('DELETE FROM guests');
-    for (const g of state.guests) {
-      await execute(`INSERT INTO guests (guest_id, full_name, email, mobile_number, address, government_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, [g.guest_id, g.full_name, g.email, g.mobile_number, g.address, g.government_id, g.created_at]);
-    }
-
-    // Guest accounts
-    await execute('DELETE FROM guest_accounts');
-    for (const a of state.guest_accounts) {
-      await execute(`INSERT INTO guest_accounts (account_id, guest_id_str, username, password_hash, full_name, mobile_number, email, stay_duration, room_preference, is_activated, first_login_password_changed, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [a.account_id, a.guest_id_str, a.username, a.password_hash, a.full_name, a.mobile_number, a.email, a.stay_duration, a.room_preference, a.is_activated ? 1 : 0, a.first_login_password_changed ? 1 : 0, a.created_at]);
-    }
-
-    // Bookings
-    await execute('DELETE FROM bookings');
-    for (const b of state.bookings) {
-      await execute(`INSERT INTO bookings (booking_id, guest_id, room_id, check_in_date, check_out_date, booking_status, booking_source, assigned_staff, created_at, is_archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [b.booking_id, b.guest_id, b.room_id, b.check_in_date, b.check_out_date, b.booking_status, b.booking_source, (b as any).assigned_staff || null, b.created_at, b.is_archived ? 1 : 0]);
-    }
-
-    // Communication logs
-    await execute('DELETE FROM communication_logs');
-    for (const l of state.communication_logs) {
-      await execute(`INSERT INTO communication_logs (log_id, guest_id_str, guest_name, communication_type, channel, status_info, timestamp, staff_member, delivery_attempts, failure_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [l.log_id, l.guest_id_str, l.guest_name, l.communication_type, l.channel, l.status_info, l.timestamp, l.staff_member || null, l.delivery_attempts || 0, l.failure_reason || '']);
-    }
-
-    await execute('COMMIT');
-    console.log('[Database] State saved to MySQL successfully');
-  } catch (err) {
-    try { await execute('ROLLBACK'); } catch(e) {}
-    console.error('[Database] Failed to persist complete state to MySQL:', err);
-  }
-}
-
-async function loadStateFromMySQL() {
-  try {
-    initMysqlPool();
-    // Load basic tables into memory
-    const guestsRows: any[] = await query('SELECT * FROM guests ORDER BY guest_id DESC');
-    state.guests = guestsRows.map(r => ({
-      guest_id: r.guest_id,
-      full_name: r.full_name,
-      email: r.email,
-      mobile_number: r.mobile_number,
-      address: r.address,
-      government_id: r.government_id,
-      created_at: r.created_at
-    }));
-
-    const accountsRows: any[] = await query('SELECT * FROM guest_accounts ORDER BY account_id DESC');
-    state.guest_accounts = accountsRows.map(r => ({
-      account_id: r.account_id,
-      guest_id_str: r.guest_id_str,
-      username: r.username,
-      password_hash: r.password_hash,
-      full_name: r.full_name,
-      mobile_number: r.mobile_number,
-      email: r.email,
-      stay_duration: r.stay_duration,
-      room_preference: r.room_preference,
-      is_activated: !!r.is_activated,
-      first_login_password_changed: !!r.first_login_password_changed,
-      created_at: r.created_at
-    }));
-
-    const bookingsRows: any[] = await query('SELECT * FROM bookings ORDER BY booking_id DESC');
-    state.bookings = bookingsRows.map(r => ({
-      booking_id: r.booking_id,
-      guest_id: r.guest_id,
-      room_id: r.room_id,
-      check_in_date: r.check_in_date,
-      check_out_date: r.check_out_date,
-      booking_status: r.booking_status,
-      booking_source: r.booking_source,
-      assigned_staff: r.assigned_staff,
-      created_at: r.created_at,
-      is_archived: !!r.is_archived
-    }));
-
-    const commRows: any[] = await query('SELECT * FROM communication_logs ORDER BY log_id DESC');
-    state.communication_logs = commRows.map(r => ({
-      log_id: r.log_id,
-      guest_id_str: r.guest_id_str,
-      guest_name: r.guest_name,
-      communication_type: r.communication_type,
-      channel: r.channel,
-      status_info: r.status_info,
-      timestamp: r.timestamp,
-      staff_member: r.staff_member,
-      delivery_attempts: r.delivery_attempts,
-      failure_reason: r.failure_reason
-    }));
-
-    // For other arrays, keep defaults or let file-based seed populate them
-    console.log('[Database] Loaded guests:', state.guests.length, 'accounts:', state.guest_accounts.length, 'bookings:', state.bookings.length);
-  } catch (err) {
-    console.error('[Database] Error loading state from MySQL:', err);
-    throw err;
-  }
-}
-
-// Bootstrap DB
-export async function initDB() {
-  if (useMySQL) {
-    try {
-      initMysqlPool();
-      await loadStateFromMySQL();
-      console.log('[Database] Initialized state from MySQL');
-      return;
-    } catch (err) {
-      console.error('[Database] Failed to initialize from MySQL, falling back to file state:', err);
-    }
-  }
-
-  if (isVercel && !fs.existsSync(DB_FILE_PATH)) {
-    const committedPath = path.join(process.cwd(), 'mock_mysql_data.json');
-    if (fs.existsSync(committedPath)) {
-      try {
-        fs.writeFileSync(DB_FILE_PATH, fs.readFileSync(committedPath));
-        console.log("[Database] Successfully copied initial DB state to Vercel /tmp folder.");
-      } catch (err) {
-        console.error("Error copying initial DB state to Vercel /tmp:", err);
-      }
-    }
-  }
-
-  loadDBFromDisk();
-
-  if (fs.existsSync(DB_FILE_PATH)) {
-    try {
-      const data = fs.readFileSync(DB_FILE_PATH, 'utf-8');
-      state = JSON.parse(data);
-      let updated = false;
-      if (!state.guest_accounts || state.guest_accounts.length < 3 || !state.guests || state.guests.length < 5 || !state.bookings || state.bookings.length < 8) {
-        state.guest_accounts = [
-          {
-            account_id: 1,
-            guest_id_str: "SNP2026001",
-            username: "guest_snp001",
-            password_hash: "Temp@123",
-            full_name: "Abhiram Thunikipati",
-            mobile_number: "+91 9876543210",
-            email: "thunikipatiabhiram173@gmail.com",
-            stay_duration: "5 Nights",
-            room_preference: "Premium Deluxe",
-            is_activated: true,
-            first_login_password_changed: true,
-            created_at: new Date().toISOString()
-          },
-          {
-            account_id: 2,
-            guest_id_str: "SNP2026002",
-            username: "guest_snp002",
-            password_hash: "Temp@123",
-            full_name: "Rajesh Kumar",
-            mobile_number: "+91 9812345678",
-            email: "rajesh@gmail.com",
-            stay_duration: "4 Nights",
-            room_preference: "Standard Room",
-            is_activated: true,
-            first_login_password_changed: true,
-            created_at: new Date().toISOString()
-          },
-          {
-            account_id: 3,
-            guest_id_str: "SNP2026003",
-            username: "guest_snp003",
-            password_hash: "Temp@123",
-            full_name: "Priyanka Sharma",
-            mobile_number: "+91 9876543215",
-            email: "priyanka@yahoo.com",
-            stay_duration: "3 Nights",
-            room_preference: "Premium Deluxe",
-            is_activated: true,
-            first_login_password_changed: true,
-            created_at: new Date().toISOString()
-          }
-        ];
-        state.guests = INITIAL_GUESTS;
-        state.bookings = INITIAL_BOOKINGS;
-        state.payments = INITIAL_PAYMENTS;
-        updated = true;
-      }
-      if (!state.communication_logs) {
-        state.communication_logs = [
-          {
-            log_id: 1,
-            guest_id_str: "SNP2026001",
-            guest_name: "Abhiram Thunikipati",
-            communication_type: "Guest Login Credentials",
-            channel: "WhatsApp",
-            status_info: "🟢 Delivered Successfully",
-            timestamp: "2026-06-04T10:45:00Z",
-            staff_member: "Reception Admin",
-            delivery_attempts: 1,
-            failure_reason: ""
-          },
-          {
-            log_id: 2,
-            guest_id_str: "SNP2026001",
-            guest_name: "Abhiram Thunikipati",
-            communication_type: "Guest Login Credentials",
-            channel: "Email",
-            status_info: "🟢 Delivered Successfully",
-            timestamp: "2026-06-04T10:45:00Z",
-            staff_member: "Reception Admin",
-            delivery_attempts: 1,
-            failure_reason: ""
-          },
-          {
-            log_id: 3,
-            guest_id_str: "SNP2026001",
-            guest_name: "Abhiram Thunikipati",
-            communication_type: "Booking Confirmation",
-            channel: "WhatsApp",
-            status_info: "🟢 Delivered Successfully",
-            timestamp: "2026-06-04T10:45:00Z",
-            staff_member: "Reception Admin",
-            delivery_attempts: 1,
-            failure_reason: ""
-          }
-        ];
-        updated = true;
-      }
-      if (!state.rooms || state.rooms.length < 52 || !state.rooms[0].image_url?.includes('photo-1598928506311-c55ded91a20c')) {
-        state.rooms = INITIAL_ROOMS;
-        updated = true;
-      }
-      // Migrate all room image URLs to 4K resolution (3840x2160)
-      if (state.rooms && Array.isArray(state.rooms)) {
-        state.rooms.forEach(r => {
-          if (r.image_url && r.image_url.includes('1200x800')) {
-            r.image_url = r.image_url.replace(/1200x800/g, '3840x2160');
-            updated = true;
-          }
-          if (r.gallery_images && Array.isArray(r.gallery_images)) {
-            r.gallery_images = r.gallery_images.map(img => {
-              if (img.includes('1200x800')) {
-                updated = true;
-                return img.replace(/1200x800/g, '3840x2160');
-              }
-              return img;
-            });
-          }
-        });
-      }
-      if (updated) {
-        saveDB();
-      }
-    } catch (err) {
-      console.warn("Could not read DB file, booting fresh state", err);
-      saveDB();
-    }
-  } else {
-    // Generate initial housekeeping tasks for occupied/dirty rooms
-    state.rooms.forEach(r => {
-      if (r.room_status === 'Dirty') {
-        state.housekeeping.push({
-          task_id: state.housekeeping.length + 1,
-          room_id: r.room_id,
-          assigned_staff: "Karan Singh",
-          task_status: "Pending",
-          completion_time: null,
-          created_at: new Date().toISOString()
-        });
-      }
-    });
-
-    // Generate room availability array for June 2026
-    let availId = 1;
-    state.rooms.forEach(r => {
-      for (let day = 1; day <= 30; day++) {
-        const dateStr = `2026-06-${day < 10 ? '0' + day : day}`;
-        const isBooked = state.bookings.some(b => 
-          b.room_id === r.room_id && 
-          b.booking_status !== 'Cancelled' &&
-          dateStr >= b.check_in_date && 
-          dateStr < b.check_out_date
-        );
-        state.room_availability.push({
-          availability_id: availId++,
-          room_id: r.room_id,
-          available_date: dateStr,
-          availability_status: isBooked ? 'Booked' : 'Available'
-        });
-      }
-    });
-
-    saveDB();
-  }
-}
-
-// Elegant Raw SQL Simulator with query logger
-export function executeQuery<T>(rawSql: string, tablesInvolved: string[], action: () => T): T {
+export async function executeQueryAsync<T>(rawSql: string, tablesInvolved: string[], action: () => Promise<T>): Promise<T> {
   const start = Date.now();
   try {
-    const result = action();
+    const result = await action();
     const duration = Date.now() - start;
     
-    // Log query
     queryLogs.unshift({
-      id: Math.random().toString(36).substr(2, 9).toUpperCase(),
+      id: Math.random().toString(36).substring(2, 11).toUpperCase(),
       timestamp: new Date().toISOString(),
       query: rawSql,
       tables_involved: tablesInvolved,
@@ -803,14 +28,13 @@ export function executeQuery<T>(rawSql: string, tablesInvolved: string[], action
       status: 'SUCCESS'
     });
     
-    // Keep last 150 sql queries
     if (queryLogs.length > 150) queryLogs.pop();
     
     return result;
   } catch (err: any) {
     const duration = Date.now() - start;
     queryLogs.unshift({
-      id: Math.random().toString(36).substr(2, 9).toUpperCase(),
+      id: Math.random().toString(36).substring(2, 11).toUpperCase(),
       timestamp: new Date().toISOString(),
       query: rawSql,
       tables_involved: tablesInvolved,
@@ -821,26 +45,70 @@ export function executeQuery<T>(rawSql: string, tablesInvolved: string[], action
   }
 }
 
-// Exposed DB Operations simulating relations and transactions
+// Deprecated sync fallback for executeQuery
+export function executeQuery<T>(rawSql: string, tablesInvolved: string[], action: () => T): T {
+  return action();
+}
+
+export function formatDate(d: any): string {
+  if (!d) return '';
+  if (d instanceof Date) {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  if (typeof d === 'string') {
+    if (d.includes('T')) return d.split('T')[0];
+    if (d.includes(' ')) return d.split(' ')[0];
+    return d;
+  }
+  return String(d);
+}
+
+// Bootstrap DB
+export async function initDB() {
+  try {
+    initMysqlPool();
+    console.log('[Database] MySQL pool initialized successfully.');
+  } catch (err) {
+    console.error('[Database] Failed to initialize MySQL pool:', err);
+  }
+}
+
 export const dbOps = {
   getRooms: () => {
     const sql = `SELECT * FROM rooms;`;
-    return executeQuery(sql, ['rooms'], () => state.rooms);
+    return executeQueryAsync(sql, ['rooms'], async () => {
+      const rows = await query(sql);
+      return rows.map((r: any) => ({
+        ...r,
+        amenities: typeof r.amenities === 'string' ? JSON.parse(r.amenities) : r.amenities,
+        gallery_images: typeof r.gallery_images === 'string' ? JSON.parse(r.gallery_images) : r.gallery_images,
+        reviews: typeof r.reviews === 'string' ? JSON.parse(r.reviews) : r.reviews
+      }));
+    });
   },
 
   getRoomAvailability: () => {
     const sql = `SELECT * FROM room_availability WHERE available_date BETWEEN '2026-06-01' AND '2026-06-30'`;
-    return executeQuery(sql, ['room_availability'], () => state.room_availability);
+    return executeQueryAsync(sql, ['room_availability'], async () => {
+      return await query(sql);
+    });
   },
 
   getGuests: () => {
     const sql = `SELECT * FROM guests ORDER BY created_at DESC;`;
-    return executeQuery(sql, ['guests'], () => state.guests);
+    return executeQueryAsync(sql, ['guests'], async () => {
+      return await query(sql);
+    });
   },
 
   getStaff: () => {
-    const sql = `SELECT * FROM staff;`;
-    return executeQuery(sql, ['staff'], () => state.staff);
+    const sql = `SELECT * FROM staff_accounts;`;
+    return executeQueryAsync(sql, ['staff_accounts'], async () => {
+      return await query(sql);
+    });
   },
 
   getSqlLogs: () => {
@@ -852,8 +120,6 @@ export const dbOps = {
   },
 
   getBookings: () => {
-    if (isVercel) loadDBFromDisk();
-    console.log('[Diagnostics] dbOps.getBookings invoked (reloaded state on Vercel if applicable). Guest accounts:', state.guest_accounts?.length, 'Bookings:', state.bookings?.length);
     const sql = `
       SELECT b.*, g.full_name AS guest_name, g.email AS guest_email, g.mobile_number AS guest_phone,
              r.room_number, r.room_type, r.price_per_night
@@ -862,20 +128,32 @@ export const dbOps = {
       LEFT JOIN rooms r ON b.room_id = r.room_id
       ORDER BY b.created_at DESC;
     `;
-    return executeQuery(sql, ['bookings', 'guests', 'rooms'], () => {
-      return state.bookings.map(b => {
-        const guest = state.guests.find(g => g.guest_id === b.guest_id);
-        const room = state.rooms.find(r => r.room_id === b.room_id);
-        return {
-          ...b,
-          guest_name: guest?.full_name || 'N/A',
-          guest_email: guest?.email || 'N/A',
-          guest_phone: guest?.mobile_number || 'N/A',
-          room_number: room?.room_number || 'N/A',
-          room_type: room?.room_type || 'N/A',
-          price_per_night: room?.price_per_night || 0
-        };
-      });
+    return executeQueryAsync(sql, ['bookings', 'guests', 'rooms'], async () => {
+      const rows = await query(sql);
+      return rows.map((r: any) => ({
+        ...r,
+        check_in_date: formatDate(r.check_in_date),
+        check_out_date: formatDate(r.check_out_date),
+        is_archived: !!r.is_archived
+      }));
+    });
+  },
+
+  getActiveStays: () => {
+    const sql = `
+      SELECT a.*, g.full_name AS guest_name, g.email AS guest_email, g.mobile_number AS guest_phone,
+             r.room_number, r.room_type, r.price_per_night
+      FROM active_stays a
+      LEFT JOIN guests g ON a.guest_id = g.guest_id
+      LEFT JOIN rooms r ON a.room_id = r.room_id
+      ORDER BY a.check_in_at DESC;
+    `;
+    return executeQueryAsync(sql, ['active_stays', 'guests', 'rooms'], async () => {
+      const rows = await query(sql);
+      return rows.map((r: any) => ({
+        ...r,
+        expected_check_out: formatDate(r.expected_check_out)
+      }));
     });
   },
 
@@ -885,15 +163,8 @@ export const dbOps = {
       FROM housekeeping h
       LEFT JOIN rooms r ON h.room_id = r.room_id;
     `;
-    return executeQuery(sql, ['housekeeping', 'rooms'], () => {
-      return state.housekeeping.map(hk => {
-        const r = state.rooms.find(room => room.room_id === hk.room_id);
-        return {
-          ...hk,
-          room_number: r?.room_number || '',
-          room_type: r?.room_type || ''
-        };
-      });
+    return executeQueryAsync(sql, ['housekeeping', 'rooms'], async () => {
+      return await query(sql);
     });
   },
 
@@ -902,22 +173,12 @@ export const dbOps = {
       SELECT c.*, g.full_name AS guest_name, r.room_number
       FROM complaints c
       LEFT JOIN guests g ON c.guest_id = g.guest_id
-      LEFT JOIN bookings b ON g.guest_id = b.guest_id AND b.booking_status = 'Checked-In'
-      LEFT JOIN rooms r ON b.room_id = r.room_id;
+      LEFT JOIN rooms r ON COALESCE(c.room_id, (
+        SELECT room_id FROM bookings WHERE guest_id = c.guest_id AND booking_status = 'Checked-In' LIMIT 1
+      )) = r.room_id;
     `;
-    return executeQuery(sql, ['complaints', 'guests', 'rooms', 'bookings'], () => {
-      return state.complaints.map(complaint => {
-        const guest = state.guests.find(g => g.guest_id === complaint.guest_id);
-        // Find checked-in booking to see current room
-        const activeBooking = state.bookings.find(b => b.guest_id === complaint.guest_id && b.booking_status === 'Checked-In');
-        const room = activeBooking ? state.rooms.find(r => r.room_id === activeBooking.room_id) : null;
-        
-        return {
-          ...complaint,
-          guest_name: guest?.full_name || 'N/A',
-          room_number: room?.room_number || 'Walk-in/N/A'
-        };
-      });
+    return executeQueryAsync(sql, ['complaints', 'guests', 'rooms', 'bookings'], async () => {
+      return await query(sql);
     });
   },
 
@@ -927,29 +188,25 @@ export const dbOps = {
       FROM feedback f
       LEFT JOIN guests g ON f.guest_id = g.guest_id;
     `;
-    return executeQuery(sql, ['feedback', 'guests'], () => {
-      return state.feedback.map(fb => {
-        const guest = state.guests.find(g => g.guest_id === fb.guest_id);
-        return {
-          ...fb,
-          guest_name: guest?.full_name || 'Anonymous',
-          guest_email: guest?.email || ''
-        };
-      });
+    return executeQueryAsync(sql, ['feedback', 'guests'], async () => {
+      return await query(sql);
     });
   },
 
   getCorporate: () => {
     const sql = `SELECT * FROM corporate_bookings;`;
-    return executeQuery(sql, ['corporate_bookings'], () => state.corporate_bookings);
+    return executeQueryAsync(sql, ['corporate_bookings'], async () => {
+      return await query(sql);
+    });
   },
 
   getPayments: () => {
     const sql = `SELECT * FROM payments;`;
-    return executeQuery(sql, ['payments'], () => state.payments);
+    return executeQueryAsync(sql, ['payments'], async () => {
+      return await query(sql);
+    });
   },
 
-  // Insert Operations mimicking atomic transactional insertions
   createBookingTransaction: (bookingData: {
     full_name: string;
     email: string;
@@ -961,278 +218,239 @@ export const dbOps = {
     check_out_date: string;
     payment_method: "UPI" | "Credit Card" | "Debit Card" | "Net Banking" | "Cash";
   }) => {
-    if (isVercel) loadDBFromDisk();
-    console.log('[Diagnostics] dbOps.createBookingTransaction invoked with:', JSON.stringify({ email: bookingData.email, room_id: bookingData.room_id, check_in: bookingData.check_in_date, check_out: bookingData.check_out_date }));
-    const sqlTransactionStart = `START TRANSACTION;`;
-    executeQuery(sqlTransactionStart, [], () => {});
-
-    // Try finding regular guest by email
-    const sqlFindGuest = `SELECT guest_id FROM guests WHERE email = '${bookingData.email}' LIMIT 1;`;
-    let guest = executeQuery(sqlFindGuest, ['guests'], () =>
-      state.guests.find(g => g.email.toLowerCase() === bookingData.email.toLowerCase())
-    );
-
-    if (!guest) {
-      const gId = state.guests.length + 1;
-      const sqlInsertGuest = `
-        INSERT INTO guests (guest_id, full_name, email, mobile_number, address, government_id)
-        VALUES (${gId}, '${bookingData.full_name}', '${bookingData.email}', '${bookingData.mobile_number}', '${bookingData.address}', '${bookingData.government_id}');
-      `;
-      guest = executeQuery(sqlInsertGuest, ['guests'], () => {
-        const newGuest: Guest = {
-          guest_id: gId,
-          full_name: bookingData.full_name,
-          email: bookingData.email,
-          mobile_number: bookingData.mobile_number,
-          address: bookingData.address,
-          government_id: bookingData.government_id,
-          created_at: new Date().toISOString()
-        };
-        state.guests.push(newGuest);
-        return newGuest;
-      });
-    }
-
-    // Verify room availability first
-    const room = state.rooms.find(r => r.room_id === bookingData.room_id);
-    if (!room) {
-      throw new Error(`Select room ID ${bookingData.room_id} not found in Relational Index.`);
-    }
-
-    // Verify room status availability block
-    const sqlCheckAvailability = `
-      SELECT availability_status FROM room_availability 
-      WHERE room_id = ${bookingData.room_id} AND available_date BETWEEN '${bookingData.check_in_date}' AND '${bookingData.check_out_date}';
-    `;
-    const isRoomAvailable = executeQuery(sqlCheckAvailability, ['room_availability'], () => {
-      // Find days overlapping our stay
-      const startDay = new Date(bookingData.check_in_date);
-      const endDay = new Date(bookingData.check_out_date);
-      const days = [];
-      let current = new Date(startDay);
-      while (current < endDay) {
-        days.push(current.toISOString().split('T')[0]);
-        current.setDate(current.getDate() + 1);
-      }
-      return !state.room_availability.some(av => 
-        av.room_id === bookingData.room_id && 
-        days.includes(av.available_date) && 
-        av.availability_status === 'Booked'
-      );
-    });
-
-    if (!isRoomAvailable) {
-      throw new Error(`Room ${room.room_number} is already booked for these selected dates.`);
-    }
-
-    // Insert Booking
-    const valBookId = state.bookings.length + 1;
-    const sqlInsertBooking = `
-      INSERT INTO bookings (booking_id, guest_id, room_id, check_in_date, check_out_date, booking_status, booking_source)
-      VALUES (${valBookId}, ${guest.guest_id}, ${bookingData.room_id}, '${bookingData.check_in_date}', '${bookingData.check_out_date}', 'Pending', 'Website');
-    `;
-    const newBooking = executeQuery(sqlInsertBooking, ['bookings'], () => {
-      const b: Booking = {
-        booking_id: valBookId,
-        guest_id: guest!.guest_id,
-        room_id: bookingData.room_id,
-        check_in_date: bookingData.check_in_date,
-        check_out_date: bookingData.check_out_date,
-        booking_status: 'Pending',
-        booking_source: 'Website',
-        assigned_staff: 'Rahul Sharma',
-        created_at: new Date().toISOString()
-      };
-      state.bookings.push(b);
-      try { console.log('[Diagnostics] New booking pushed to state with id', b.booking_id); } catch(e) {}
-      return b;
-    });
-
-    // Make room dates booked
-    const startDay = new Date(bookingData.check_in_date);
-    const endDay = new Date(bookingData.check_out_date);
-    let current = new Date(startDay);
-    while (current < endDay) {
-      const dStr = current.toISOString().split('T')[0];
-      const sqlUpdateAvail = `UPDATE room_availability SET availability_status = 'Booked' WHERE room_id = ${bookingData.room_id} AND available_date = '${dStr}';`;
-      executeQuery(sqlUpdateAvail, ['room_availability'], () => {
-        const found = state.room_availability.find(av => av.room_id === bookingData.room_id && av.available_date === dStr);
-        if (found) {
-          found.availability_status = 'Booked';
+    const sql = `START TRANSACTION; /* createBookingTransaction */`;
+    return executeQueryAsync(sql, ['bookings', 'guests', 'rooms', 'payments', 'room_availability'], async () => {
+      await query('START TRANSACTION');
+      try {
+        let guestId: number;
+        const existingGuests = await query('SELECT guest_id FROM guests WHERE email = ? LIMIT 1', [bookingData.email]);
+        if (existingGuests.length > 0) {
+          guestId = existingGuests[0].guest_id;
         } else {
-          state.room_availability.push({
-            availability_id: state.room_availability.length + 1,
-            room_id: bookingData.room_id,
-            available_date: dStr,
-            availability_status: 'Booked'
-          });
+          const insertGuest = await execute(
+            'INSERT INTO guests (full_name, email, mobile_number, address, government_id) VALUES (?, ?, ?, ?, ?)',
+            [bookingData.full_name, bookingData.email, bookingData.mobile_number, bookingData.address, bookingData.government_id]
+          );
+          guestId = insertGuest.insertId;
         }
-      });
-      current.setDate(current.getDate() + 1);
-    }
 
-    // Calculate dynamic stay pricing & GST taxes
-    const stayNights = Math.max(1, Math.round((endDay.getTime() - startDay.getTime()) / (1000 * 60 * 60 * 24)));
-    const roomCost = room.price_per_night * stayNights;
-    
-    // Indian tax laws: 12% GST for standard room (<7500 per night), 18% GST for luxury/suites (>7500 per night)
-    const gstRate = room.price_per_night >= 7500 ? 0.18 : 0.12;
-    const gstAmount = Math.round(roomCost * gstRate);
-    const totalAmount = roomCost + gstAmount;
+        const rooms = await query('SELECT * FROM rooms WHERE room_id = ? LIMIT 1', [bookingData.room_id]);
+        if (rooms.length === 0) throw new Error(`Select room ID ${bookingData.room_id} not found in Relational Index.`);
+        const room = rooms[0];
 
-    // Create transactional payment record
-    const payId = state.payments.length + 1;
-    const txnRef = `TXN${Math.floor(100000000000 + Math.random() * 900000000000)}`;
-    const sqlInsertPayment = `
-      INSERT INTO payments (payment_id, booking_id, amount, gst_amount, payment_method, payment_status, transaction_reference)
-      VALUES (${payId}, ${newBooking.booking_id}, ${totalAmount}, ${gstAmount}, '${bookingData.payment_method}', 'Paid', '${txnRef}');
-    `;
-    const newPayment = executeQuery(sqlInsertPayment, ['payments'], () => {
-      const p: Payment = {
-        payment_id: payId,
-        booking_id: newBooking.booking_id,
-        amount: totalAmount,
-        gst_amount: gstAmount,
-        payment_method: bookingData.payment_method,
-        payment_status: 'Paid',
-        transaction_reference: txnRef,
-        payment_date: new Date().toISOString()
-      };
-      state.payments.push(p);
-      return p;
+        const startDay = new Date(bookingData.check_in_date);
+        const endDay = new Date(bookingData.check_out_date);
+        const days: string[] = [];
+        let current = new Date(startDay);
+        while (current < endDay) {
+          days.push(current.toISOString().split('T')[0]);
+          current.setDate(current.getDate() + 1);
+        }
+
+        if (days.length > 0) {
+          const existingBooked = await query(
+            'SELECT COUNT(*) as count FROM room_availability WHERE room_id = ? AND available_date IN (?) AND availability_status = "Booked"',
+            [bookingData.room_id, days]
+          );
+          if (existingBooked[0].count > 0) {
+            throw new Error(`Room ${room.room_number} is already booked for these selected dates.`);
+          }
+        }
+
+        const insertBooking = await execute(
+          'INSERT INTO bookings (guest_id, room_id, check_in_date, check_out_date, booking_status, booking_source, assigned_staff) VALUES (?, ?, ?, ?, "Pending", "Website", "Rahul Sharma")',
+          [guestId, bookingData.room_id, bookingData.check_in_date, bookingData.check_out_date]
+        );
+        const bookingId = insertBooking.insertId;
+
+        for (const day of days) {
+          await execute(
+            'INSERT INTO room_availability (room_id, available_date, availability_status) VALUES (?, ?, "Booked") ON DUPLICATE KEY UPDATE availability_status = "Booked"',
+            [bookingData.room_id, day]
+          );
+        }
+
+        const stayNights = Math.max(1, Math.round((endDay.getTime() - startDay.getTime()) / (1000 * 60 * 60 * 24)));
+        const roomCost = room.price_per_night * stayNights;
+        const gstRate = room.price_per_night >= 7500 ? 0.18 : 0.12;
+        const gstAmount = Math.round(roomCost * gstRate);
+        const totalAmount = roomCost + gstAmount;
+
+        const txnRef = `TXN${Math.floor(100000000000 + Math.random() * 900000000000)}`;
+        await execute(
+          'INSERT INTO payments (booking_id, amount, gst_amount, payment_method, payment_status, transaction_reference) VALUES (?, ?, ?, ?, "Paid", ?)',
+          [bookingId, totalAmount, gstAmount, bookingData.payment_method, txnRef]
+        );
+
+        await query('COMMIT');
+
+        const [booking] = await query('SELECT * FROM bookings WHERE booking_id = ?', [bookingId]);
+        const [guestObj] = await query('SELECT * FROM guests WHERE guest_id = ?', [guestId]);
+        const [payment] = await query('SELECT * FROM payments WHERE booking_id = ?', [bookingId]);
+
+        return { 
+          booking: { 
+            ...booking, 
+            check_in_date: formatDate(booking.check_in_date),
+            check_out_date: formatDate(booking.check_out_date),
+            is_archived: !!booking.is_archived 
+          }, 
+          guestObject: guestObj, 
+          payment 
+        };
+      } catch (err) {
+        await query('ROLLBACK');
+        throw err;
+      }
     });
-
-    const sqlCommit = `COMMIT;`;
-    executeQuery(sqlCommit, [], () => {});
-    
-    saveDB();
-    try { console.log('[Diagnostics] saveDB() called after booking creation, bookingId:', newBooking.booking_id); } catch(e) {}
-    return { booking: newBooking, guestObject: guest, payment: newPayment };
   },
 
   archiveBooking: (bookingId: number, isArchived: boolean) => {
-    if (isVercel) loadDBFromDisk();
     const sql = `UPDATE bookings SET is_archived = ${isArchived ? 1 : 0} WHERE booking_id = ${bookingId};`;
-    return executeQuery(sql, ['bookings'], () => {
-      const found = state.bookings.find(b => b.booking_id === bookingId);
-      if (!found) throw new Error("Booking record not encountered.");
-      found.is_archived = isArchived;
-      saveDB();
-      return found;
+    return executeQueryAsync(sql, ['bookings'], async () => {
+      await execute('UPDATE bookings SET is_archived = ? WHERE booking_id = ?', [isArchived ? 1 : 0, bookingId]);
+      const [booking] = await query('SELECT * FROM bookings WHERE booking_id = ?', [bookingId]);
+      return { 
+        ...booking, 
+        check_in_date: formatDate(booking.check_in_date),
+        check_out_date: formatDate(booking.check_out_date),
+        is_archived: !!booking.is_archived 
+      };
     });
   },
 
   updateBookingStatus: (bookingId: number, status: Booking['booking_status']) => {
-    if (isVercel) loadDBFromDisk();
     const sql = `UPDATE bookings SET booking_status = '${status}' WHERE booking_id = ${bookingId};`;
-    return executeQuery(sql, ['bookings'], () => {
-      const found = state.bookings.find(b => b.booking_id === bookingId);
-      if (!found) throw new Error("Booking record not encountered.");
-      found.booking_status = status;
-      
-      // Relational flow updates:
-      // Sync guest account activation status
-      const guest = state.guests.find(g => g.guest_id === found.guest_id);
-      if (guest) {
-        const guestAccount = (state.guest_accounts || []).find(acc => acc.email.toLowerCase() === guest.email.toLowerCase());
-        if (guestAccount) {
-          if (status === 'Checked-In') {
-            const sqlGuestActive = `UPDATE guest_accounts SET is_activated = 1 WHERE account_id = ${guestAccount.account_id};`;
-            executeQuery(sqlGuestActive, ['guest_accounts'], () => {
-              guestAccount.is_activated = true;
-            });
-          } else if (status === 'Checked-Out') {
-            const otherStays = state.bookings.filter(b => b.guest_id === found.guest_id && b.booking_status === 'Checked-In' && b.booking_id !== bookingId);
-            if (otherStays.length === 0) {
-              const sqlGuestInactive = `UPDATE guest_accounts SET is_activated = 0 WHERE account_id = ${guestAccount.account_id};`;
-              executeQuery(sqlGuestInactive, ['guest_accounts'], () => {
-                guestAccount.is_activated = false;
-              });
+    return executeQueryAsync(sql, ['bookings', 'guest_accounts', 'rooms', 'housekeeping', 'room_availability', 'active_stays', 'stay_history'], async () => {
+      await query('START TRANSACTION');
+      try {
+        await execute('UPDATE bookings SET booking_status = ? WHERE booking_id = ?', [status, bookingId]);
+        const bookings = await query('SELECT * FROM bookings WHERE booking_id = ?', [bookingId]);
+        if (bookings.length === 0) throw new Error("Booking record not encountered.");
+        const found = bookings[0];
+
+        const guests = await query('SELECT * FROM guests WHERE guest_id = ?', [found.guest_id]);
+        if (guests.length > 0) {
+          const guest = guests[0];
+          const guestAccounts = await query('SELECT * FROM guest_accounts WHERE LOWER(email) = LOWER(?)', [guest.email]);
+          if (guestAccounts.length > 0) {
+            const guestAccount = guestAccounts[0];
+            if (status === 'Checked-In') {
+              await execute('UPDATE guest_accounts SET is_activated = 1 WHERE account_id = ?', [guestAccount.account_id]);
+            } else if (status === 'Checked-Out') {
+              const otherStays = await query(
+                'SELECT * FROM bookings WHERE guest_id = ? AND booking_status = "Checked-In" AND booking_id != ?',
+                [found.guest_id, bookingId]
+              );
+              if (otherStays.length === 0) {
+                await execute('UPDATE guest_accounts SET is_activated = 0 WHERE account_id = ?', [guestAccount.account_id]);
+              }
             }
           }
         }
-      }
 
-      // If Checked-in, change Room status to Occupied
-      // If Checked-out, change Room status to Dirty, and create a Housekeeping Clean Task automatically!
-      const room = state.rooms.find(r => r.room_id === found.room_id);
-      if (room) {
-        if (status === 'Checked-In') {
-          const sqlRoomOccupied = `UPDATE rooms SET room_status = 'Occupied' WHERE room_id = ${room.room_id};`;
-          executeQuery(sqlRoomOccupied, ['rooms'], () => {
-            room.room_status = 'Occupied';
-          });
-        } else if (status === 'Checked-Out') {
-          const sqlRoomDirty = `UPDATE rooms SET room_status = 'Dirty' WHERE room_id = ${room.room_id};`;
-          executeQuery(sqlRoomDirty, ['rooms'], () => {
-            room.room_status = 'Dirty';
-          });
-
-          // Add clean task
-          const taskSql = `INSERT INTO housekeeping (room_id, assigned_staff, task_status) VALUES (${room.room_id}, 'Karan Singh', 'Pending');`;
-          executeQuery(taskSql, ['housekeeping'], () => {
-            state.housekeeping.push({
-              task_id: state.housekeeping.length + 1,
-              room_id: room.room_id,
-              assigned_staff: 'Karan Singh',
-              task_status: 'Pending',
-              completion_time: null,
-              created_at: new Date().toISOString()
-            });
-          });
-        } else if (status === 'Cancelled') {
-          // Relieve blocked dates
-          const startDay = new Date(found.check_in_date);
-          const endDay = new Date(found.check_out_date);
-          let current = new Date(startDay);
-          while (current < endDay) {
-            const dStr = current.toISOString().split('T')[0];
-            const sqlRelieve = `UPDATE room_availability SET availability_status = 'Available' WHERE room_id = ${found.room_id} AND available_date = '${dStr}';`;
-            executeQuery(sqlRelieve, ['room_availability'], () => {
-              const av = state.room_availability.find(a => a.room_id === found.room_id && a.available_date === dStr);
-              if (av) av.availability_status = 'Available';
-            });
-            current.setDate(current.getDate() + 1);
+        const rooms = await query('SELECT * FROM rooms WHERE room_id = ?', [found.room_id]);
+        if (rooms.length > 0) {
+          const room = rooms[0];
+          if (status === 'Checked-In') {
+            await execute('UPDATE rooms SET room_status = "Occupied" WHERE room_id = ?', [room.room_id]);
+            await execute(
+              'INSERT INTO active_stays (booking_id, guest_id, room_id, expected_check_out, status) VALUES (?, ?, ?, ?, "Checked-In") ON DUPLICATE KEY UPDATE status = "Checked-In"',
+              [bookingId, found.guest_id, found.room_id, found.check_out_date]
+            );
+          } else if (status === 'Checked-Out') {
+            await execute('UPDATE rooms SET room_status = "Dirty" WHERE room_id = ?', [room.room_id]);
+            await execute('INSERT INTO housekeeping (room_id, assigned_staff, task_status) VALUES (?, "Karan Singh", "Pending")', [room.room_id]);
+            await execute('DELETE FROM active_stays WHERE booking_id = ?', [bookingId]);
+            const payments = await query('SELECT amount FROM payments WHERE booking_id = ?', [bookingId]);
+            const totalAmount = payments.length > 0 ? payments[0].amount : 0.00;
+            await execute(
+              'INSERT INTO stay_history (booking_id, guest_id, room_id, check_in_date, check_out_date, status, total_amount) VALUES (?, ?, ?, ?, ?, "Checked-Out", ?) ON DUPLICATE KEY UPDATE status = "Checked-Out", total_amount = ?',
+              [bookingId, found.guest_id, found.room_id, found.check_in_date, found.check_out_date, totalAmount, totalAmount]
+            );
+          } else if (status === 'Cancelled') {
+            const startDay = new Date(found.check_in_date);
+            const endDay = new Date(found.check_out_date);
+            let current = new Date(startDay);
+            while (current < endDay) {
+              const dStr = current.toISOString().split('T')[0];
+              await execute('UPDATE room_availability SET availability_status = "Available" WHERE room_id = ? AND available_date = ?', [found.room_id, dStr]);
+              current.setDate(current.getDate() + 1);
+            }
+            await execute('DELETE FROM active_stays WHERE booking_id = ?', [bookingId]);
+            await execute(
+              'INSERT INTO stay_history (booking_id, guest_id, room_id, check_in_date, check_out_date, status, total_amount) VALUES (?, ?, ?, ?, ?, "Cancelled", 0.00) ON DUPLICATE KEY UPDATE status = "Cancelled", total_amount = 0.00',
+              [bookingId, found.guest_id, found.room_id, found.check_in_date, found.check_out_date]
+            );
           }
         }
+
+        await query('COMMIT');
+        const [booking] = await query('SELECT * FROM bookings WHERE booking_id = ?', [bookingId]);
+        return { 
+          ...booking, 
+          check_in_date: formatDate(booking.check_in_date),
+          check_out_date: formatDate(booking.check_out_date),
+          is_archived: !!booking.is_archived 
+        };
+      } catch (err) {
+        await query('ROLLBACK');
+        throw err;
       }
-      
-      saveDB();
-      return found;
     });
   },
 
   updatePaymentStatus: (paymentId: number, status: "Pending" | "Paid" | "Refunded") => {
     const sql = `UPDATE payments SET payment_status = '${status}' WHERE payment_id = ${paymentId};`;
-    return executeQuery(sql, ['payments'], () => {
-      const found = state.payments.find(p => p.payment_id === paymentId);
-      if (!found) throw new Error("Payment record not found.");
-      found.payment_status = status;
-      saveDB();
-      return found;
+    return executeQueryAsync(sql, ['payments'], async () => {
+      await execute('UPDATE payments SET payment_status = ? WHERE payment_id = ?', [status, paymentId]);
+      const [payment] = await query('SELECT * FROM payments WHERE payment_id = ?', [paymentId]);
+      return payment;
     });
   },
 
   updateHousekeepingTask: (taskId: number, status: HousekeepingTask['task_status']) => {
     const sql = `UPDATE housekeeping SET task_status = '${status}' WHERE task_id = ${taskId};`;
-    return executeQuery(sql, ['housekeeping'], () => {
-      const found = state.housekeeping.find(t => t.task_id === taskId);
-      if (!found) throw new Error("Housekeeping task not found.");
-      found.task_status = status;
-      if (status === 'Completed') {
-        found.completion_time = new Date().toISOString();
-        
-        // Relational flow update: Change physical Room status back to 'Available'!
-        const r = state.rooms.find(room => room.room_id === found.room_id);
-        if (r) {
-          const sqlRoomAvailable = `UPDATE rooms SET room_status = 'Available' WHERE room_id = ${r.room_id};`;
-          executeQuery(sqlRoomAvailable, ['rooms'], () => {
-            r.room_status = 'Available';
-          });
+    return executeQueryAsync(sql, ['housekeeping', 'rooms', 'active_stays', 'room_availability'], async () => {
+      await query('START TRANSACTION');
+      try {
+        const completionTime = status === 'Completed' ? new Date() : null;
+        await execute('UPDATE housekeeping SET task_status = ?, completion_time = ? WHERE task_id = ?', [status, completionTime, taskId]);
+        const tasks = await query('SELECT * FROM housekeeping WHERE task_id = ?', [taskId]);
+        if (tasks.length === 0) throw new Error("Housekeeping task not found.");
+        const found = tasks[0];
+
+        if (status === 'Completed') {
+          await execute('UPDATE rooms SET room_status = "Available" WHERE room_id = ?', [found.room_id]);
+          await execute('DELETE FROM active_stays WHERE room_id = ?', [found.room_id]);
+          
+          const todayStr = new Date().toISOString().split('T')[0];
+          const bookingsToClear = await query(
+            'SELECT * FROM bookings WHERE room_id = ? AND booking_status IN ("Checked-Out", "Checked-In") AND check_out_date >= ?',
+            [found.room_id, todayStr]
+          );
+          for (const booking of bookingsToClear) {
+            const start = new Date(booking.check_in_date) > new Date() ? booking.check_in_date : todayStr;
+            const end = booking.check_out_date;
+            
+            let current = new Date(start);
+            const endDay = new Date(end);
+            while (current < endDay) {
+              const dStr = current.toISOString().split('T')[0];
+              await execute(
+                'UPDATE room_availability SET availability_status = "Available" WHERE room_id = ? AND available_date = ?',
+                [found.room_id, dStr]
+              );
+              current.setDate(current.getDate() + 1);
+            }
+          }
         }
+        await query('COMMIT');
+        return found;
+      } catch (err) {
+        await query('ROLLBACK');
+        throw err;
       }
-      saveDB();
-      return found;
     });
   },
 
@@ -1241,167 +459,123 @@ export const dbOps = {
     complaint_category: Complaint['complaint_category'];
     complaint_description: string;
     priority_level: Complaint['priority_level'];
+    room_id?: number;
+    booking_id?: number;
   }) => {
-    // Find guest ID by email
-    const sqlFindGuest = `SELECT guest_id FROM guests WHERE email = '${complaintData.email}' LIMIT 1;`;
-    const guest = executeQuery(sqlFindGuest, ['guests'], () => 
-      state.guests.find(g => g.email.toLowerCase() === complaintData.email.toLowerCase())
-    );
+    const sql = `INSERT INTO complaints ...`;
+    return executeQueryAsync(sql, ['complaints', 'guests', 'bookings'], async () => {
+      const guests = await query('SELECT guest_id FROM guests WHERE LOWER(email) = LOWER(?) LIMIT 1', [complaintData.email]);
+      if (guests.length === 0) throw new Error("Only checked-in active guests can submit official complaints. Registered email not found.");
+      const guestId = guests[0].guest_id;
 
-    if (!guest) {
-      throw new Error("Only checked-in active guests can submit official complaints. Registered email not found.");
-    }
+      let roomId = complaintData.room_id;
+      let bookingId = complaintData.booking_id;
 
-    const compId = state.complaints.length + 1;
-    const sqlInsertComplaint = `
-      INSERT INTO complaints (complaint_id, guest_id, complaint_category, complaint_description, priority_level, complaint_status)
-      VALUES (${compId}, ${guest.guest_id}, '${complaintData.complaint_category}', '${complaintData.complaint_description}', '${complaintData.priority_level}', 'Pending');
-    `;
-    
-    const newComp = executeQuery(sqlInsertComplaint, ['complaints'], () => {
-      const c: Complaint = {
-        complaint_id: compId,
-        guest_id: guest.guest_id,
-        complaint_category: complaintData.complaint_category,
-        complaint_description: complaintData.complaint_description,
-        priority_level: complaintData.priority_level,
-        complaint_status: 'Pending',
-        created_at: new Date().toISOString()
-      };
-      state.complaints.push(c);
+      if (!roomId || !bookingId) {
+        const activeBookings = await query('SELECT booking_id, room_id FROM bookings WHERE guest_id = ? AND booking_status = "Checked-In" LIMIT 1', [guestId]);
+        if (activeBookings.length > 0) {
+          roomId = roomId || activeBookings[0].room_id;
+          bookingId = bookingId || activeBookings[0].booking_id;
+        }
+      }
+
+      const insertResult = await execute(
+        'INSERT INTO complaints (guest_id, room_id, booking_id, complaint_category, complaint_description, priority_level, complaint_status) VALUES (?, ?, ?, ?, ?, ?, "Pending")',
+        [guestId, roomId, bookingId, complaintData.complaint_category, complaintData.complaint_description, complaintData.priority_level]
+      );
+      const [c] = await query('SELECT * FROM complaints WHERE complaint_id = ?', [insertResult.insertId]);
       return c;
     });
-
-    saveDB();
-    return newComp;
   },
 
   updateComplaintStatus: (complaintId: number, status: Complaint['complaint_status']) => {
     const sql = `UPDATE complaints SET complaint_status = '${status}' WHERE complaint_id = ${complaintId};`;
-    return executeQuery(sql, ['complaints'], () => {
-      const found = state.complaints.find(c => c.complaint_id === complaintId);
-      if (!found) throw new Error("Complaint log has not been found.");
-      found.complaint_status = status;
-      saveDB();
-      return found;
+    return executeQueryAsync(sql, ['complaints'], async () => {
+      await execute('UPDATE complaints SET complaint_status = ? WHERE complaint_id = ?', [status, complaintId]);
+      const [c] = await query('SELECT * FROM complaints WHERE complaint_id = ?', [complaintId]);
+      return c;
     });
   },
 
   submitFeedback: (feedbackData: {
-    guest_name: string; // Creates simple guest link or stores as anonymous guest id
+    guest_name: string;
     email: string;
     rating: number;
     comments: string;
   }) => {
-    let guest = state.guests.find(g => g.email.toLowerCase() === feedbackData.email.toLowerCase());
-    if (!guest) {
-      // Bootstrap guest record
-      const gId = state.guests.length + 1;
-      const sqlInsertGuest = `INSERT INTO guests (guest_id, full_name, email, mobile_number, address, government_id) VALUES (${gId}, '${feedbackData.guest_name}', '${feedbackData.email}', 'N/A', 'N/A', 'N/A');`;
-      guest = executeQuery(sqlInsertGuest, ['guests'], () => {
-        const ng: Guest = {
-          guest_id: gId,
-          full_name: feedbackData.guest_name,
-          email: feedbackData.email,
-          mobile_number: 'N/A',
-          address: 'N/A',
-          government_id: 'N/A',
-          created_at: new Date().toISOString()
-        };
-        state.guests.push(ng);
-        return ng;
-      });
-    }
+    const sql = `INSERT INTO feedback ...`;
+    return executeQueryAsync(sql, ['feedback', 'guests'], async () => {
+      let guestId: number;
+      const guests = await query('SELECT guest_id FROM guests WHERE LOWER(email) = LOWER(?) LIMIT 1', [feedbackData.email]);
+      if (guests.length > 0) {
+        guestId = guests[0].guest_id;
+      } else {
+        const insertGuest = await execute(
+          'INSERT INTO guests (full_name, email, mobile_number, address, government_id) VALUES (?, ?, "N/A", "N/A", "N/A")',
+          [feedbackData.guest_name, feedbackData.email]
+        );
+        guestId = insertGuest.insertId;
+      }
 
-    const fId = state.feedback.length + 1;
-    const sqlInsertFeedback = `
-      INSERT INTO feedback (feedback_id, guest_id, rating, comments)
-      VALUES (${fId}, ${guest.guest_id}, ${feedbackData.rating}, '${feedbackData.comments}');
-    `;
-    const newFb = executeQuery(sqlInsertFeedback, ['feedback'], () => {
-      const fb: Feedback = {
-        feedback_id: fId,
-        guest_id: guest!.guest_id,
-        rating: feedbackData.rating,
-        comments: feedbackData.comments,
-        submitted_at: new Date().toISOString()
-      };
-      state.feedback.push(fb);
-      return fb;
+      const insertFb = await execute(
+        'INSERT INTO feedback (guest_id, rating, comments) VALUES (?, ?, ?)',
+        [guestId, feedbackData.rating, feedbackData.comments]
+      );
+      const [f] = await query('SELECT * FROM feedback WHERE feedback_id = ?', [insertFb.insertId]);
+      return f;
     });
-
-    saveDB();
-    return newFb;
   },
 
   submitCorporateBooking: (corpData: Omit<CorporateBooking, 'corporate_booking_id' | 'booking_status' | 'created_at'>) => {
-    const cId = state.corporate_bookings.length + 1;
-    const sql = `
-      INSERT INTO corporate_bookings (corporate_booking_id, company_name, contact_person, contact_email, contact_phone, number_of_rooms, booking_dates)
-      VALUES (${cId}, '${corpData.company_name}', '${corpData.contact_person}', '${corpData.contact_email}', '${corpData.contact_phone}', ${corpData.number_of_rooms}, '${corpData.booking_dates}');
-    `;
-    const newCorp = executeQuery(sql, ['corporate_bookings'], () => {
-      const cb: CorporateBooking = {
-        corporate_booking_id: cId,
-        company_name: corpData.company_name,
-        contact_person: corpData.contact_person,
-        contact_email: corpData.contact_email,
-        contact_phone: corpData.contact_phone,
-        number_of_rooms: corpData.number_of_rooms,
-        booking_dates: corpData.booking_dates,
-        booking_status: 'Pending',
-        created_at: new Date().toISOString()
-      };
-      state.corporate_bookings.push(cb);
+    const sql = `INSERT INTO corporate_bookings ...`;
+    return executeQueryAsync(sql, ['corporate_bookings'], async () => {
+      const insertResult = await execute(
+        'INSERT INTO corporate_bookings (company_name, contact_person, contact_email, contact_phone, number_of_rooms, booking_dates, booking_status) VALUES (?, ?, ?, ?, ?, ?, "Pending")',
+        [corpData.company_name, corpData.contact_person, corpData.contact_email, corpData.contact_phone, corpData.number_of_rooms, corpData.booking_dates]
+      );
+      const [cb] = await query('SELECT * FROM corporate_bookings WHERE corporate_booking_id = ?', [insertResult.insertId]);
       return cb;
     });
-
-    saveDB();
-    return newCorp;
   },
 
   updateCorporateBooking: (corpId: number, status: CorporateBooking['booking_status']) => {
     const sql = `UPDATE corporate_bookings SET booking_status = '${status}' WHERE corporate_booking_id = ${corpId};`;
-    return executeQuery(sql, ['corporate_bookings'], () => {
-      const found = state.corporate_bookings.find(cb => cb.corporate_booking_id === corpId);
-      if (!found) throw new Error("Corporate booking not found.");
-      found.booking_status = status;
-      saveDB();
-      return found;
+    return executeQueryAsync(sql, ['corporate_bookings'], async () => {
+      await execute('UPDATE corporate_bookings SET booking_status = ? WHERE corporate_booking_id = ?', [status, corpId]);
+      const [cb] = await query('SELECT * FROM corporate_bookings WHERE corporate_booking_id = ?', [corpId]);
+      return cb;
     });
   },
 
   createRoomServiceRequest: (requestData: {
     email: string;
     request_type: string;
+    room_id?: number;
+    booking_id?: number;
   }) => {
-    const guest = state.guests.find(g => g.email.toLowerCase() === requestData.email.toLowerCase());
-    if (!guest) throw new Error("Registered email not found. Please log in first.");
+    const sql = `INSERT INTO room_service_requests ...`;
+    return executeQueryAsync(sql, ['room_service_requests', 'guests', 'bookings'], async () => {
+      const guests = await query('SELECT guest_id FROM guests WHERE LOWER(email) = LOWER(?) LIMIT 1', [requestData.email]);
+      if (guests.length === 0) throw new Error("Registered email not found. Please log in first.");
+      const guestId = guests[0].guest_id;
 
-    // Find active checked-in booking
-    const booking = state.bookings.find(b => b.guest_id === guest.guest_id && b.booking_status === 'Checked-In');
-    if (!booking) throw new Error("No active stay checked-in for this user.");
+      let roomId = requestData.room_id;
+      let bookingId = requestData.booking_id;
 
-    const rId = state.room_service_requests.length + 1;
-    const sql = `
-      INSERT INTO room_service_requests (request_id, guest_id, room_id, request_type, request_status)
-      VALUES (${rId}, ${guest.guest_id}, ${booking.room_id}, '${requestData.request_type}', 'Pending');
-    `;
-    const newReq = executeQuery(sql, ['room_service_requests'], () => {
-      const r: RoomServiceRequest = {
-        request_id: rId,
-        guest_id: guest.guest_id,
-        room_id: booking.room_id,
-        request_type: requestData.request_type,
-        request_status: 'Pending',
-        created_at: new Date().toISOString()
-      };
-      state.room_service_requests.push(r);
+      if (!roomId || !bookingId) {
+        const activeBookings = await query('SELECT booking_id, room_id FROM bookings WHERE guest_id = ? AND booking_status = "Checked-In" LIMIT 1', [guestId]);
+        if (activeBookings.length === 0) throw new Error("No active stay checked-in for this user.");
+        roomId = roomId || activeBookings[0].room_id;
+        bookingId = bookingId || activeBookings[0].booking_id;
+      }
+
+      const insertResult = await execute(
+        'INSERT INTO room_service_requests (guest_id, room_id, booking_id, request_type, request_status) VALUES (?, ?, ?, ?, "Pending")',
+        [guestId, roomId, bookingId, requestData.request_type]
+      );
+      const [r] = await query('SELECT * FROM room_service_requests WHERE request_id = ?', [insertResult.insertId]);
       return r;
     });
-
-    saveDB();
-    return newReq;
   },
 
   getRoomServiceRequests: () => {
@@ -1409,73 +583,47 @@ export const dbOps = {
       SELECT r.*, g.full_name AS guest_name, rm.room_number
       FROM room_service_requests r
       LEFT JOIN guests g ON r.guest_id = g.guest_id
-      LEFT JOIN rooms rm ON r.room_id = rm.room_id
+      LEFT JOIN rooms rm ON r.room_id = rm.room_id;
     `;
-    return executeQuery(sql, ['room_service_requests', 'guests', 'rooms'], () => {
-      return state.room_service_requests.map(req => {
-        const guest = state.guests.find(g => g.guest_id === req.guest_id);
-        const room = state.rooms.find(rm => rm.room_id === req.room_id);
-        return {
-          ...req,
-          guest_name: guest?.full_name || 'N/A',
-          room_number: room?.room_number || 'N/A'
-        };
-      });
+    return executeQueryAsync(sql, ['room_service_requests', 'guests', 'rooms'], async () => {
+      return await query(sql);
     });
   },
 
   updateRoomServiceStatus: (requestId: number, status: RoomServiceRequest['request_status']) => {
     const sql = `UPDATE room_service_requests SET request_status = '${status}' WHERE request_id = ${requestId};`;
-    return executeQuery(sql, ['room_service_requests'], () => {
-      const found = state.room_service_requests.find(r => r.request_id === requestId);
-      if (!found) throw new Error("Request could not be found.");
-      found.request_status = status;
-      saveDB();
-      return found;
+    return executeQueryAsync(sql, ['room_service_requests'], async () => {
+      await execute('UPDATE room_service_requests SET request_status = ? WHERE request_id = ?', [status, requestId]);
+      const [r] = await query('SELECT * FROM room_service_requests WHERE request_id = ?', [requestId]);
+      return r;
     });
   },
 
   getGuestAccounts: () => {
-    if (isVercel) loadDBFromDisk();
-    console.log('[Diagnostics] dbOps.getGuestAccounts invoked (reloaded state on Vercel if applicable). Guest accounts:', state.guest_accounts?.length, 'Guests:', state.guests?.length);
     const sql = `
       SELECT ga.*, r.room_number, b.check_in_date, b.check_out_date 
       FROM guest_accounts ga
       LEFT JOIN guests g ON LOWER(ga.email) = LOWER(g.email)
-      LEFT JOIN bookings b ON g.guest_id = b.guest_id AND b.booking_status != 'Cancelled'
+      LEFT JOIN (
+        SELECT guest_id, MAX(booking_id) as latest_booking_id
+        FROM bookings
+        WHERE booking_status != 'Cancelled'
+        GROUP BY guest_id
+      ) lb ON g.guest_id = lb.guest_id
+      LEFT JOIN bookings b ON lb.latest_booking_id = b.booking_id
       LEFT JOIN rooms r ON b.room_id = r.room_id
       ORDER BY ga.created_at DESC;
     `;
-    return executeQuery(sql, ['guest_accounts', 'guests', 'bookings', 'rooms'], () => {
-      const list = state.guest_accounts || [];
-      return list.map(acc => {
-        // Relational simulated join
-        const guest = state.guests.find(g => g.email.toLowerCase() === acc.email.toLowerCase());
-        let room_number = 'Not Booked';
-        let check_in_date = 'N/A';
-        let check_out_date = 'N/A';
-        
-        if (guest) {
-          // Find any active or latest non-cancelled booking
-          const booking = state.bookings
-            .filter(b => b.guest_id === guest.guest_id && b.booking_status !== 'Cancelled')
-            .sort((a, b) => b.booking_id - a.booking_id)[0];
-          
-          if (booking) {
-            const room = state.rooms.find(r => r.room_id === booking.room_id);
-            room_number = room ? `Room ${room.room_number}` : 'N/A';
-            check_in_date = booking.check_in_date;
-            check_out_date = booking.check_out_date;
-          }
-        }
-
-        return {
-          ...acc,
-          room_number,
-          check_in_date,
-          check_out_date
-        } as any;
-      });
+    return executeQueryAsync(sql, ['guest_accounts', 'guests', 'bookings', 'rooms'], async () => {
+      const rows = await query(sql);
+      return rows.map((r: any) => ({
+        ...r,
+        is_activated: !!r.is_activated,
+        first_login_password_changed: !!r.first_login_password_changed,
+        room_number: r.room_number ? `Room ${r.room_number}` : 'Not Booked',
+        check_in_date: r.check_in_date || 'N/A',
+        check_out_date: r.check_out_date || 'N/A'
+      }));
     });
   },
 
@@ -1484,92 +632,140 @@ export const dbOps = {
     mobile_number: string;
     email: string;
     stay_duration: string;
-    room_preference: string;
   }) => {
-    if (isVercel) loadDBFromDisk();
-    const list = state.guest_accounts || [];
-    const count = list.length + 1;
-    const guest_id_str = `SNP2026${String(count).padStart(3, '0')}`;
-    const username = `guest_snp${String(count).padStart(3, '0')}`;
-    // Simple secure digits suffix e.g. Temp@567
-    const password_hash = `Temp@${Math.floor(100 + Math.random() * 900)}`;
+    const sql = `INSERT INTO guest_accounts ...`;
+    console.log('[Diagnostics DB] createGuestAccount data received:', data);
+    return executeQueryAsync(sql, ['guest_accounts', 'guests'], async () => {
+      console.log('[Diagnostics DB] Beginning guest account transaction');
 
-    const actId = list.length + 1;
-    const sql = `
-      INSERT INTO guest_accounts (account_id, guest_id_str, username, password_hash, full_name, mobile_number, email, stay_duration, room_preference, is_activated, first_login_password_changed)
-      VALUES (${actId}, '${guest_id_str}', '${username}', '${password_hash}', '${data.full_name}', '${data.mobile_number}', '${data.email}', '${data.stay_duration}', '${data.room_preference}', 1, 0);
-    `;
+      // CRITICAL: All steps (GET_LOCK, START TRANSACTION, SELECT, INSERT, COMMIT,
+      // RELEASE_LOCK) MUST run on the same physical MySQL connection.
+      // Using pool.getConnection() guarantees this — the shared query()/execute()
+      // helpers use pool.query() which can return a different connection each call,
+      // making GET_LOCK completely ineffective across calls.
+      const conn = await getPool().getConnection();
+      const lockName = 'snp_guest_account_id_lock';
 
-    return executeQuery(sql, ['guest_accounts'], () => {
-      const newAcc: GuestAccount = {
-        account_id: actId,
-        guest_id_str,
-        username,
-        password_hash,
-        full_name: data.full_name,
-        mobile_number: data.mobile_number,
-        email: data.email,
-        stay_duration: data.stay_duration,
-        room_preference: data.room_preference,
-        is_activated: true,
-        first_login_password_changed: false,
-        created_at: new Date().toISOString()
-      };
+      try {
+        // 1. Acquire advisory lock on THIS dedicated connection (10-second timeout)
+        const [lockResult] = await conn.query(
+          'SELECT GET_LOCK(?, 10) AS locked', [lockName]
+        );
+        const locked = (lockResult as any[])[0]?.locked;
+        console.log('[Diagnostics DB] Advisory lock GET_LOCK result:', locked, '| connection threadId:', (conn as any).threadId);
+        if (!locked) {
+          throw new Error('Could not acquire advisory lock for guest ID generation. Please try again.');
+        }
 
-      // Ensure they exist in local guests index as well for relations
-      const gId = state.guests.length + 1;
-      state.guests.push({
-        guest_id: gId,
-        full_name: data.full_name,
-        email: data.email,
-        mobile_number: data.mobile_number,
-        address: "Refer to Guest Access Preference in Relational Index",
-        government_id: `Verified Guest Account (${guest_id_str})`,
-        created_at: new Date().toISOString()
-      });
+        await conn.query('START TRANSACTION');
+        try {
+          const [maxRows] = await conn.query(`
+            SELECT MAX(
+              CAST(SUBSTRING(guest_id_str, 8) AS UNSIGNED)
+            ) AS max_suffix
+            FROM guest_accounts
+            WHERE guest_id_str LIKE 'SNP2026%'
+          `);
+          const maxSuffix = (maxRows as any[])[0]?.max_suffix;
+          console.log('[Diagnostics DB] MAX suffix query result — max_suffix:', maxSuffix);
 
-      if (!state.guest_accounts) state.guest_accounts = [];
-      state.guest_accounts.push(newAcc);
-      saveDB();
-      return newAcc;
+          const nextNum = (maxSuffix !== null && maxSuffix !== undefined)
+            ? Number(maxSuffix) + 1
+            : 1;
+          console.log(`[Diagnostics DB] Computed nextNum: ${nextNum} (max_suffix was ${maxSuffix})`);
+
+          const guest_id_str = `SNP2026${String(nextNum).padStart(3, '0')}`;
+          const username     = `guest_snp${String(nextNum).padStart(3, '0')}`;
+          const password_hash = `Temp@${Math.floor(100 + Math.random() * 900)}`;
+
+          console.log('[Diagnostics DB] ✅ INSERTING — guest_id_str:', guest_id_str, '| username:', username, '| password_hash:', password_hash);
+
+          const [insertResult] = await conn.execute(
+            'INSERT INTO guest_accounts (guest_id_str, username, password_hash, full_name, mobile_number, email, stay_duration, is_activated, first_login_password_changed) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0)',
+            [guest_id_str, username, password_hash, data.full_name, data.mobile_number, data.email, data.stay_duration]
+          );
+          const accountId = (insertResult as any).insertId;
+          console.log('[Diagnostics DB] INSERT guest_accounts succeeded — new account_id:', accountId);
+
+          await conn.execute(
+            'INSERT INTO guests (full_name, email, mobile_number, address, government_id) VALUES (?, ?, ?, "Refer to Guest Access Preference in Relational Index", ?)',
+            [data.full_name, data.email, data.mobile_number, `Verified Guest Account (${guest_id_str})`]
+          );
+          console.log('[Diagnostics DB] INSERT guests succeeded');
+
+          await conn.query('COMMIT');
+          console.log('[Diagnostics DB] COMMIT successful — account created:', guest_id_str);
+
+          const [accRows] = await conn.query(
+            'SELECT * FROM guest_accounts WHERE account_id = ?', [accountId]
+          );
+          const acc = (accRows as any[])[0];
+          return {
+            ...acc,
+            is_activated: !!acc.is_activated,
+            first_login_password_changed: !!acc.first_login_password_changed
+          };
+        } catch (err) {
+          console.error('[Diagnostics DB] Transaction failed, rolling back. Error:', err);
+          await conn.query('ROLLBACK');
+          throw err;
+        }
+      } finally {
+        try {
+          await conn.query('SELECT RELEASE_LOCK(?)', [lockName]);
+          console.log('[Diagnostics DB] Advisory lock released');
+        } catch (_) {}
+        conn.release();
+        console.log('[Diagnostics DB] Connection returned to pool');
+      }
     });
   },
 
   updateGuestAccountPassword: (usernameOrGuestId: string, newPass: string) => {
-    if (isVercel) loadDBFromDisk();
     const sql = `UPDATE guest_accounts SET password_hash = '${newPass}', first_login_password_changed = 1 WHERE username = '${usernameOrGuestId}' OR guest_id_str = '${usernameOrGuestId}';`;
-    return executeQuery(sql, ['guest_accounts'], () => {
-      const found = (state.guest_accounts || []).find(acc => acc.username === usernameOrGuestId || acc.guest_id_str === usernameOrGuestId);
-      if (!found) throw new Error("Credentials reference not encountered in secure Relational index.");
-      found.password_hash = newPass;
-      found.first_login_password_changed = true;
-      saveDB();
-      return found;
+    return executeQueryAsync(sql, ['guest_accounts'], async () => {
+      await execute(
+        'UPDATE guest_accounts SET password_hash = ?, first_login_password_changed = 1 WHERE username = ? OR guest_id_str = ?',
+        [newPass, usernameOrGuestId, usernameOrGuestId]
+      );
+      const accounts = await query('SELECT * FROM guest_accounts WHERE username = ? OR guest_id_str = ?', [usernameOrGuestId, usernameOrGuestId]);
+      if (accounts.length === 0) throw new Error("Credentials reference not encountered in secure Relational index.");
+      const acc = accounts[0];
+      return {
+        ...acc,
+        is_activated: !!acc.is_activated,
+        first_login_password_changed: !!acc.first_login_password_changed
+      };
     });
   },
 
   toggleGuestAccountActivation: (accountId: number) => {
-    if (isVercel) loadDBFromDisk();
-    const found = (state.guest_accounts || []).find(acc => acc.account_id === accountId);
-    if (!found) throw new Error("Account index not found.");
-    const nextStatus = !found.is_activated;
-    const sql = `UPDATE guest_accounts SET is_activated = ${nextStatus ? 1 : 0} WHERE account_id = ${accountId};`;
-    return executeQuery(sql, ['guest_accounts'], () => {
-      found.is_activated = nextStatus;
-      saveDB();
-      return found;
+    const sql = `UPDATE guest_accounts SET is_activated = ...`;
+    return executeQueryAsync(sql, ['guest_accounts'], async () => {
+      await query('START TRANSACTION');
+      try {
+        const accounts = await query('SELECT is_activated FROM guest_accounts WHERE account_id = ?', [accountId]);
+        if (accounts.length === 0) throw new Error("Account index not found.");
+        const nextStatus = accounts[0].is_activated ? 0 : 1;
+        await execute('UPDATE guest_accounts SET is_activated = ? WHERE account_id = ?', [nextStatus, accountId]);
+        await query('COMMIT');
+        const [acc] = await query('SELECT * FROM guest_accounts WHERE account_id = ?', [accountId]);
+        return {
+          ...acc,
+          is_activated: !!acc.is_activated,
+          first_login_password_changed: !!acc.first_login_password_changed
+        };
+      } catch (err) {
+        await query('ROLLBACK');
+        throw err;
+      }
     });
   },
 
   deleteGuestAccount: (accountId: number) => {
-    if (isVercel) loadDBFromDisk();
-    const list = state.guest_accounts || [];
-    const found = list.find(acc => acc.account_id === accountId);
-    if (!found) throw new Error("Account index not found.");
     const sql = `DELETE FROM guest_accounts WHERE account_id = ${accountId};`;
-    return executeQuery(sql, ['guest_accounts'], () => {
-      state.guest_accounts = list.filter(acc => acc.account_id !== accountId);
-      saveDB();
+    return executeQueryAsync(sql, ['guest_accounts'], async () => {
+      await execute('DELETE FROM guest_accounts WHERE account_id = ?', [accountId]);
       return true;
     });
   },
@@ -1594,150 +790,44 @@ export const dbOps = {
       logId = filterOrGuestIdStr.log_id;
     }
 
-    // Build a realistic SQL query string for logging purposes
-    let sql = "SELECT * FROM communication_logs";
-    const conditions: string[] = [];
     if (logId) {
-      conditions.push(`log_id = ${logId}`);
-    } else if (bookingId) {
-      sql = `
-        SELECT cl.* FROM communication_logs cl
-        JOIN guests g ON cl.guest_name = g.full_name OR cl.recipient_email = g.email OR cl.recipient_email = g.mobile_number
-        JOIN bookings b ON g.guest_id = b.guest_id
-        WHERE b.booking_id = ${bookingId}
-      `;
-    } else {
-      if (guestIdStr) {
-        conditions.push(`guest_id_str = '${guestIdStr}'`);
-      }
-      if (guestId) {
-        conditions.push(`(guest_id_str = 'SNP-GUEST-${guestId}' OR guest_id_str = 'SNP2026${String(guestId).padStart(3, '0')}')`);
-      }
+      const sql = 'SELECT * FROM communication_history WHERE log_id = ?';
+      return executeQueryAsync(sql, ['communication_history'], async () => {
+        return await query(sql, [logId]);
+      });
     }
 
-    if (conditions.length > 0 && !bookingId) {
+    if (bookingId) {
+      const sql = `
+        SELECT cl.* FROM communication_history cl
+        JOIN guests g ON LOWER(cl.guest_name) = LOWER(g.full_name) OR LOWER(cl.recipient_email) = LOWER(g.email)
+        JOIN bookings b ON g.guest_id = b.guest_id
+        WHERE b.booking_id = ?
+        ORDER BY cl.timestamp DESC;
+      `;
+      return executeQueryAsync(sql, ['communication_history', 'guests', 'bookings'], async () => {
+        return await query(sql, [bookingId]);
+      });
+    }
+
+    let sql = 'SELECT * FROM communication_history';
+    const conditions = [];
+    const params = [];
+    if (guestIdStr) {
+      conditions.push('guest_id_str = ?');
+      params.push(guestIdStr);
+    }
+    if (guestId) {
+      conditions.push('(guest_id_str = ? OR guest_id_str = ?)');
+      params.push(`SNP-GUEST-${guestId}`, `SNP2026${String(guestId).padStart(3, '0')}`);
+    }
+    if (conditions.length > 0) {
       sql += ` WHERE ${conditions.join(' AND ')}`;
     }
-    sql += " ORDER BY timestamp DESC;";
+    sql += ' ORDER BY timestamp DESC;';
 
-    return executeQuery(sql, ['communication_logs', 'guests', 'bookings', 'guest_accounts'], () => {
-      const logs = state.communication_logs || [];
-
-      // If filtering by specific log_id
-      if (logId) {
-        return logs.filter(l => l.log_id === Number(logId));
-      }
-
-      // Resolve targeted guest info (name, email, phone, ids)
-      const targetEmails: string[] = [];
-      const targetPhones: string[] = [];
-      const targetNames: string[] = [];
-      const targetIdStrs: string[] = [];
-      let hasFilter = false;
-
-      // 1. If guest_id or booking_id is provided, resolve guest from database
-      let resolvedGuestId: number | null = null;
-      if (bookingId) {
-        hasFilter = true;
-        const booking = state.bookings.find(b => String(b.booking_id) === String(bookingId));
-        if (booking) {
-          resolvedGuestId = booking.guest_id;
-        }
-      } else if (guestId) {
-        hasFilter = true;
-        resolvedGuestId = Number(guestId);
-      }
-
-      // Look up by guest ID
-      if (resolvedGuestId !== null) {
-        const guest = state.guests.find(g => g.guest_id === resolvedGuestId);
-        if (guest) {
-          targetNames.push(guest.full_name.toLowerCase().trim());
-          targetEmails.push(guest.email.toLowerCase().trim());
-          targetPhones.push(guest.mobile_number.replace(/\D/g, ''));
-        }
-        targetIdStrs.push(`SNP-GUEST-${resolvedGuestId}`);
-        targetIdStrs.push(`SNP-GUEST-${String(resolvedGuestId).padStart(3, '0')}`);
-        // Check if there is an account in guest_accounts matching this guest's email/phone/name
-        const acc = state.guest_accounts?.find(a => 
-          (guest && a.email.toLowerCase() === guest.email.toLowerCase()) ||
-          (guest && a.mobile_number.replace(/\D/g, '') === guest.mobile_number.replace(/\D/g, '')) ||
-          a.guest_id_str === `SNP2026${String(resolvedGuestId).padStart(3, '0')}`
-        );
-        if (acc) {
-          targetIdStrs.push(acc.guest_id_str);
-          targetNames.push(acc.full_name.toLowerCase().trim());
-          targetEmails.push(acc.email.toLowerCase().trim());
-          targetPhones.push(acc.mobile_number.replace(/\D/g, ''));
-        }
-      }
-
-      // 2. If guest_id_str is provided
-      if (guestIdStr) {
-        hasFilter = true;
-        targetIdStrs.push(guestIdStr);
-        // Find guest account by id str
-        const acc = state.guest_accounts?.find(a => a.guest_id_str === guestIdStr);
-        if (acc) {
-          targetNames.push(acc.full_name.toLowerCase().trim());
-          targetEmails.push(acc.email.toLowerCase().trim());
-          targetPhones.push(acc.mobile_number.replace(/\D/g, ''));
-          // Find the corresponding numeric guest_id
-          const guest = state.guests.find(g => g.email.toLowerCase() === acc.email.toLowerCase());
-          if (guest) {
-            targetIdStrs.push(`SNP-GUEST-${guest.guest_id}`);
-            targetIdStrs.push(`SNP-GUEST-${String(guest.guest_id).padStart(3, '0')}`);
-          }
-        } else {
-          // Check if guest_id_str is of format SNP-GUEST-X
-          const match = guestIdStr.match(/SNP-GUEST-(\d+)/i);
-          if (match) {
-            const numericId = Number(match[1]);
-            const guest = state.guests.find(g => g.guest_id === numericId);
-            if (guest) {
-              targetNames.push(guest.full_name.toLowerCase().trim());
-              targetEmails.push(guest.email.toLowerCase().trim());
-              targetPhones.push(guest.mobile_number.replace(/\D/g, ''));
-            }
-          }
-        }
-      }
-
-      // If we resolved search filters, apply strict guest-specific matching
-      if (hasFilter) {
-        const uniqueIds = Array.from(new Set(targetIdStrs)).filter(Boolean);
-        const uniqueNames = Array.from(new Set(targetNames)).filter(Boolean);
-        const uniqueEmails = Array.from(new Set(targetEmails)).filter(Boolean);
-        const uniquePhones = Array.from(new Set(targetPhones)).filter(Boolean);
-
-        return logs.filter(log => {
-          // First, check if the log matches any of the resolved ID strings
-          const idMatches = uniqueIds.includes(log.guest_id_str);
-
-          // Second, check if name/email/phone matches to guarantee it's the SAME person (prevents ID clashing)
-          const nameMatches = log.guest_name && uniqueNames.includes(log.guest_name.toLowerCase().trim());
-          
-          let emailOrPhoneMatches = false;
-          if (log.recipient_email) {
-            const cleanRecipient = log.recipient_email.replace(/\D/g, '');
-            const isPhone = /^\+?\d+$/.test(log.recipient_email.replace(/\s+/g, ''));
-            
-            if (isPhone) {
-              emailOrPhoneMatches = uniquePhones.some(phone => 
-                cleanRecipient.endsWith(phone) || phone.endsWith(cleanRecipient)
-              );
-            } else {
-              emailOrPhoneMatches = uniqueEmails.includes(log.recipient_email.toLowerCase().trim());
-            }
-          }
-
-          // A log is a valid match if:
-          // The ID matches AND (the guest name matches OR recipient contact matches)
-          return idMatches && (nameMatches || emailOrPhoneMatches);
-        });
-      }
-
-      return logs;
+    return executeQueryAsync(sql, ['communication_history'], async () => {
+      return await query(sql, params);
     });
   },
 
@@ -1753,32 +843,17 @@ export const dbOps = {
     api_response?: string;
     error_code?: string;
   }) => {
-    const logs = state.communication_logs || [];
-    const logId = logs.length + 1;
-    const sql = `
-      INSERT INTO communication_logs (log_id, guest_id_str, guest_name, communication_type, channel, status_info, timestamp, staff_member, delivery_attempts, failure_reason)
-      VALUES (${logId}, '${logData.guest_id_str}', '${logData.guest_name}', '${logData.communication_type}', '${logData.channel}', '${logData.status_info}', NOW(), '${logData.staff_member}', 1, '${logData.failure_reason || ''}');
-    `;
-
-    return executeQuery(sql, ['communication_logs'], () => {
-      const newLog: CommunicationLog = {
-        log_id: logId,
-        guest_id_str: logData.guest_id_str,
-        guest_name: logData.guest_name,
-        communication_type: logData.communication_type,
-        channel: logData.channel,
-        status_info: logData.status_info,
-        timestamp: new Date().toISOString(),
-        staff_member: logData.staff_member,
-        delivery_attempts: 1,
-        failure_reason: logData.failure_reason || "",
-        recipient_email: logData.recipient_email,
-        api_response: logData.api_response,
-        error_code: logData.error_code
-      };
-      state.communication_logs.push(newLog);
-      saveDB();
-      return newLog;
+    const sql = `INSERT INTO communication_history ...`;
+    return executeQueryAsync(sql, ['communication_history'], async () => {
+      const insertResult = await execute(
+        'INSERT INTO communication_history (guest_id_str, guest_name, communication_type, channel, status_info, timestamp, staff_member, delivery_attempts, failure_reason, recipient_email, api_response, error_code) VALUES (?, ?, ?, ?, ?, NOW(), ?, 1, ?, ?, ?, ?)',
+        [
+          logData.guest_id_str, logData.guest_name, logData.communication_type, logData.channel, logData.status_info,
+          logData.staff_member, logData.failure_reason || '', logData.recipient_email || '', logData.api_response || '', logData.error_code || ''
+        ]
+      );
+      const [l] = await query('SELECT * FROM communication_history WHERE log_id = ?', [insertResult.insertId]);
+      return l;
     });
   },
 
@@ -1791,30 +866,155 @@ export const dbOps = {
     api_response?: string,
     error_code?: string
   ) => {
-    const logs = state.communication_logs || [];
-    const sql = `UPDATE communication_logs SET status_info = '${status_info}'${attempts ? `, delivery_attempts = ${attempts}` : ''} WHERE log_id = ${logId};`;
-    return executeQuery(sql, ['communication_logs'], () => {
-      const found = logs.find(l => l.log_id === logId);
-      if (!found) throw new Error("Log record not found.");
-      found.status_info = status_info;
+    const sql = `UPDATE communication_history SET status_info = ? ... WHERE log_id = ${logId};`;
+    return executeQueryAsync(sql, ['communication_history'], async () => {
+      const updates = [];
+      const params = [];
+      updates.push('status_info = ?');
+      params.push(status_info);
       if (attempts !== undefined) {
-        found.delivery_attempts = attempts;
+        updates.push('delivery_attempts = ?');
+        params.push(attempts);
       }
       if (reason !== undefined) {
-        found.failure_reason = reason;
+        updates.push('failure_reason = ?');
+        params.push(reason);
       }
       if (recipient_email !== undefined) {
-        found.recipient_email = recipient_email;
+        updates.push('recipient_email = ?');
+        params.push(recipient_email);
       }
       if (api_response !== undefined) {
-        found.api_response = api_response;
+        updates.push('api_response = ?');
+        params.push(api_response);
       }
       if (error_code !== undefined) {
-        found.error_code = error_code;
+        updates.push('error_code = ?');
+        params.push(error_code);
       }
-      found.timestamp = new Date().toISOString();
-      saveDB();
-      return found;
+      params.push(logId);
+      await execute(`UPDATE communication_history SET ${updates.join(', ')}, timestamp = NOW() WHERE log_id = ?`, params);
+      const [l] = await query('SELECT * FROM communication_history WHERE log_id = ?', [logId]);
+      return l;
+    });
+  },
+
+  resetRoomCleanStatus: (roomId: number, staffMember: string) => {
+    const sql = `UPDATE rooms SET room_status = 'Available' WHERE room_id = ${roomId};`;
+    return executeQueryAsync(sql, ['rooms', 'housekeeping', 'active_stays', 'room_availability', 'front_desk_records'], async () => {
+      await query('START TRANSACTION');
+      try {
+        // 1. Fetch room details
+        const rooms = await query('SELECT room_number FROM rooms WHERE room_id = ? LIMIT 1', [roomId]);
+        if (rooms.length === 0) throw new Error(`Room ID ${roomId} not found.`);
+        const roomNumber = rooms[0].room_number;
+
+        // 2. Update room_status to Available
+        await execute('UPDATE rooms SET room_status = "Available" WHERE room_id = ?', [roomId]);
+
+        // 3. Clear any housekeeping pending flags (mark active tasks as Completed)
+        await execute(
+          'UPDATE housekeeping SET task_status = "Completed", completion_time = NOW() WHERE room_id = ? AND task_status != "Completed"',
+          [roomId]
+        );
+
+        // 4. Reset occupancy-related locks
+        await execute('DELETE FROM active_stays WHERE room_id = ?', [roomId]);
+
+        // 5. Update room availability records for checked-out bookings
+        const todayStr = new Date().toISOString().split('T')[0];
+        const bookingsToClear = await query(
+          'SELECT * FROM bookings WHERE room_id = ? AND booking_status IN ("Checked-Out", "Checked-In") AND check_out_date >= ?',
+          [roomId, todayStr]
+        );
+        for (const booking of bookingsToClear) {
+          const start = new Date(booking.check_in_date) > new Date() ? booking.check_in_date : todayStr;
+          const end = booking.check_out_date;
+          
+          let current = new Date(start);
+          const endDay = new Date(end);
+          while (current < endDay) {
+            const dStr = current.toISOString().split('T')[0];
+            await execute(
+              'UPDATE room_availability SET availability_status = "Available" WHERE room_id = ? AND available_date = ?',
+              [roomId, dStr]
+            );
+            current.setDate(current.getDate() + 1);
+          }
+        }
+
+        // 6. Log the action in front_desk_records
+        const logPayload = JSON.stringify({
+          room_number: roomNumber,
+          staff_member: staffMember,
+          date_time: new Date().toISOString(),
+          action: 'Mark Room Clean & Available'
+        });
+        await execute(
+          'INSERT INTO front_desk_records (ref_type, ref_id, payload) VALUES ("ROOM_CLEAN_RESET", ?, ?)',
+          [roomId, logPayload]
+        );
+
+        await query('COMMIT');
+
+        const [updatedRoom] = await query('SELECT * FROM rooms WHERE room_id = ?', [roomId]);
+        return {
+          ...updatedRoom,
+          amenities: typeof updatedRoom.amenities === 'string' ? JSON.parse(updatedRoom.amenities) : updatedRoom.amenities,
+          gallery_images: typeof updatedRoom.gallery_images === 'string' ? JSON.parse(updatedRoom.gallery_images) : updatedRoom.gallery_images,
+          reviews: typeof updatedRoom.reviews === 'string' ? JSON.parse(updatedRoom.reviews) : updatedRoom.reviews
+        };
+      } catch (err) {
+        await query('ROLLBACK');
+        throw err;
+      }
+    });
+  },
+
+  getMonthlyRevenueTrend: () => {
+    const sql = `
+      SELECT 
+        MONTH(payment_date) AS month,
+        SUM(amount) AS revenue
+      FROM payments
+      GROUP BY MONTH(payment_date)
+      ORDER BY MONTH(payment_date);
+    `;
+    return executeQueryAsync(sql, ['payments'], async () => {
+      const rows = await query(sql);
+      const months = [
+        { name: 'January', num: 1 },
+        { name: 'February', num: 2 },
+        { name: 'March', num: 3 },
+        { name: 'April', num: 4 },
+        { name: 'May', num: 5 },
+        { name: 'June', num: 6 },
+        { name: 'July', num: 7 },
+        { name: 'August', num: 8 },
+        { name: 'September', num: 9 },
+        { name: 'October', num: 10 },
+        { name: 'November', num: 11 },
+        { name: 'December', num: 12 }
+      ];
+      
+      const trends = months.map(m => {
+        const row = rows.find((r: any) => Number(r.month) === m.num);
+        const revenue = row ? Number(row.revenue) : 0;
+        return {
+          name: m.name,
+          revenue: isNaN(revenue) || revenue === null ? 0 : revenue
+        };
+      });
+
+      // Console log formatted as Jan: xxxx, Feb: xxxx, ...
+      const abbreviations = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const logData: { [key: string]: number } = {};
+      trends.forEach((t, i) => {
+        logData[abbreviations[i]] = t.revenue;
+      });
+      console.log('Monthly Revenue Data:\n', logData);
+
+      return trends;
     });
   }
 };

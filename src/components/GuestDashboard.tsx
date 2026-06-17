@@ -74,8 +74,9 @@ export function GuestDashboard({ loggedInGuest, onUpdateGuest }: GuestDashboardP
   const [isLoadingStays, setIsLoadingStays] = useState(false);
 
   // Active Stay extraction
-  const [activeStay, setActiveStay] = useState<Booking | null>(null);
   const [activeStays, setActiveStays] = useState<Booking[]>([]);
+  const [selectedActiveStayId, setSelectedActiveStayId] = useState<number | null>(null);
+  const activeStay = activeStays.find(s => s.booking_id === selectedActiveStayId) || activeStays[0] || null;
   const [stayHistory, setStayHistory] = useState<Booking[]>([]);
 
   // Dining States & Cart logic
@@ -87,7 +88,7 @@ export function GuestDashboard({ loggedInGuest, onUpdateGuest }: GuestDashboardP
 
   // Issues State & Inputs
   const [issues, setIssues] = useState<Complaint[]>([]);
-  const [issueCategory, setIssueCategory] = useState<Complaint['complaint_category']>('Wi-Fi');
+  const [issueCategory, setIssueCategory] = useState<Complaint['complaint_category']>('Wi-Fi Internet Disconnections');
   const [issueTitle, setIssueTitle] = useState('');
   const [issueDesc, setIssueDesc] = useState('');
   const [issuePriority, setIssuePriority] = useState<Complaint['priority_level']>('Medium');
@@ -131,19 +132,26 @@ export function GuestDashboard({ loggedInGuest, onUpdateGuest }: GuestDashboardP
   const prevIssuesRef = useRef<Complaint[]>([]);
 
   // Initialize and Fetch MySQL Data
-  const fetchAllData = async (silent = false) => {
+  const fetchAllData = async (silent = false, pollOnly = false) => {
     if (!silent) setIsLoadingStays(true);
     try {
+      // Fetch endpoints depending on whether it's a poll or a full sync
+      const fetchBookingsPromise = pollOnly ? Promise.resolve(null) : fetch('/api/bookings');
+      const fetchPaymentsPromise = pollOnly ? Promise.resolve(null) : fetch('/api/payments');
+      const fetchAccountsPromise = pollOnly ? Promise.resolve(null) : fetch('/api/auth/guest-accounts');
+      const fetchServicePromise = fetch('/api/room-service');
+      const fetchComplaintPromise = fetch('/api/complaints');
+
       // Fetch all endpoints in parallel
       const [bookRes, payRes, serviceRes, complaintRes, accountRes] = await Promise.all([
-        fetch('/api/bookings'),
-        fetch('/api/payments'),
-        fetch('/api/room-service'),
-        fetch('/api/complaints'),
-        fetch('/api/auth/guest-accounts')
+        fetchBookingsPromise,
+        fetchPaymentsPromise,
+        fetchServicePromise,
+        fetchComplaintPromise,
+        fetchAccountsPromise
       ]);
 
-      if (accountRes.ok) {
+      if (accountRes && accountRes.ok) {
         const accData = await accountRes.json();
         const myAccount = accData.accounts.find((a: any) => a.email.toLowerCase() === guestEmail.toLowerCase());
         if (myAccount && onUpdateGuest) {
@@ -153,8 +161,8 @@ export function GuestDashboard({ loggedInGuest, onUpdateGuest }: GuestDashboardP
         }
       }
 
-      let myBookings: Booking[] = [];
-      if (bookRes.ok) {
+      let myBookings: Booking[] = bookings;
+      if (bookRes && bookRes.ok) {
         const data = await bookRes.json();
         // filter by email
         myBookings = data.bookings.filter((b: Booking) => b.guest_email?.toLowerCase() === guestEmail.toLowerCase());
@@ -163,14 +171,18 @@ export function GuestDashboard({ loggedInGuest, onUpdateGuest }: GuestDashboardP
         // Classify stays
         const activeList = myBookings.filter(b => b.booking_status === 'Checked-In');
         setActiveStays(activeList);
-        const active = activeList[0] || null;
-        setActiveStay(active);
+        setSelectedActiveStayId(prev => {
+          if (prev && activeList.some(s => s.booking_id === prev)) {
+            return prev;
+          }
+          return activeList[0]?.booking_id || null;
+        });
 
         const history = myBookings.filter(b => b.booking_status === 'Checked-Out' || b.booking_status === 'Cancelled');
         setStayHistory(history);
       }
 
-      if (payRes.ok) {
+      if (payRes && payRes.ok) {
         const data = await payRes.json();
         // filter payments corresponding to our bookings
         const bookingIds = myBookings.map(b => b.booking_id);
@@ -180,14 +192,10 @@ export function GuestDashboard({ loggedInGuest, onUpdateGuest }: GuestDashboardP
 
       if (serviceRes.ok) {
         const data = await serviceRes.json();
-        const activeBooking = myBookings.find(b => b.booking_status === 'Checked-In');
-        let myServices: RoomServiceRequest[] = [];
-        if (activeBooking) {
-          myServices = data.requests.filter((r: RoomServiceRequest) => r.room_id === activeBooking.room_id);
-        } else {
-          // fallback to email filter
-          myServices = data.requests.filter((r: RoomServiceRequest) => r.guest_name?.toLowerCase() === guestName.toLowerCase());
-        }
+        const activeRoomIds = myBookings.filter(b => b.booking_status === 'Checked-In').map(b => b.room_id);
+        let myServices: RoomServiceRequest[] = data.requests.filter((r: RoomServiceRequest) => 
+          activeRoomIds.includes(r.room_id) || r.guest_name?.toLowerCase() === guestName.toLowerCase()
+        );
         setPlacedOrders(myServices);
 
         // Check for state changes to trigger live notification alerts
@@ -257,13 +265,49 @@ export function GuestDashboard({ loggedInGuest, onUpdateGuest }: GuestDashboardP
     fetchAllData();
   }, [guestEmail]);
 
-  // LIVE STATUS TRACKING: Set up seamless interval-based data synchronization every 4 seconds.
-  // This satisfies the "without requiring page refresh" and real-time live tracking requirements.
+
+  // INSTANT SYNC: Listen for Front Desk booking status broadcasts.
+  // FrontDeskDashboard writes 'snp_booking_status_change' to localStorage after
+  // every Check-In or Check-Out. This storage event fires in the same tab and
+  // across all tabs on the same origin — eliminating the polling delay.
+  // HousekeepingDashboard writes 'snp_service_status_change' to localStorage
+  // after every room-service or complaint status update.
   useEffect(() => {
-    const syncInterval = setInterval(() => {
+    const handleStorageSync = (e: StorageEvent) => {
+      if (
+        e.key === 'snp_booking_status_change' ||
+        e.key === 'snp_service_status_change'
+      ) {
+        // A status changed on Front Desk or Housekeeping — refresh immediately
+        fetchAllData(true);
+      }
+    };
+
+    // Also handle same-tab dispatched events via custom DOM events
+    const handleSameTabSync = () => {
       fetchAllData(true);
-    }, 4000);
-    return () => clearInterval(syncInterval);
+    };
+
+    window.addEventListener('storage', handleStorageSync);
+    window.addEventListener('snp_booking_status_change', handleSameTabSync);
+    window.addEventListener('snp_service_status_change', handleSameTabSync);
+
+    return () => {
+      window.removeEventListener('storage', handleStorageSync);
+      window.removeEventListener('snp_booking_status_change', handleSameTabSync);
+      window.removeEventListener('snp_service_status_change', handleSameTabSync);
+    };
+  }, [guestEmail]);
+
+  // POLLING FALLBACK: Refresh room-service + complaint data every 10 seconds.
+  // This guarantees GuestDashboard always converges to the latest status even
+  // when running in a separate browser tab where cross-tab custom DOM events
+  // cannot fire.
+  useEffect(() => {
+    const pollInterval = setInterval(() => {
+      fetchAllData(true, true);
+    }, 10000);
+    return () => clearInterval(pollInterval);
   }, [guestEmail]);
 
   const getGuestStatusLabel = () => {
@@ -286,23 +330,24 @@ export function GuestDashboard({ loggedInGuest, onUpdateGuest }: GuestDashboardP
   };
 
   // Request AI Booking Summary using Gemini 3.5 API
-  const fetchAiSummary = async () => {
-    if (!activeStay) return;
+  const fetchAiSummary = async (targetStay?: Booking) => {
+    const stay = targetStay || activeStay;
+    if (!stay) return;
     setIsLoadingAi(true);
     setAiSummary(null);
     playSound('assistant');
     try {
-      const pm = payments.find(p => p.booking_id === activeStay.booking_id);
+      const pm = payments.find(p => p.booking_id === stay.booking_id);
       const res = await fetch('/api/ai/booking-summary', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           guest_name: guestName,
-          room_type: activeStay.room_type,
-          room_number: activeStay.room_number,
-          check_in: activeStay.check_in_date,
-          check_out: activeStay.check_out_date,
-          total_paid: pm ? pm.amount : activeStay.price_per_night * 4,
+          room_type: stay.room_type,
+          room_number: stay.room_number,
+          check_in: stay.check_in_date,
+          check_out: stay.check_out_date,
+          total_paid: pm ? pm.amount : stay.price_per_night * 4,
           payment_method: pm ? pm.payment_method : 'UPI'
         })
       });
@@ -674,7 +719,9 @@ export function GuestDashboard({ loggedInGuest, onUpdateGuest }: GuestDashboardP
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: guestEmail,
-          request_type: finalRequestType
+          request_type: finalRequestType,
+          room_id: activeStay.room_id,
+          booking_id: activeStay.booking_id
         })
       });
 
@@ -722,7 +769,9 @@ export function GuestDashboard({ loggedInGuest, onUpdateGuest }: GuestDashboardP
         body: JSON.stringify({
           email: guestEmail,
           complaint_category: issueCategory,
-          complaint_description: `${issueTitle ? issueTitle + ' - ' : ''}${issueDesc}`
+          complaint_description: `${issueTitle ? issueTitle + ' - ' : ''}${issueDesc}`,
+          room_id: activeStay.room_id,
+          booking_id: activeStay.booking_id
         })
       });
 
@@ -965,91 +1014,109 @@ export function GuestDashboard({ loggedInGuest, onUpdateGuest }: GuestDashboardP
             {/* TAB A: ACTIVE STAY INFORMATION */}
             {activeTab === 'active-stay' && (
               <div className="space-y-6" id="panel_active_stay_view">
-                {activeStay ? (
+                {activeStays.length > 0 ? (
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     
-                    {/* Active stay details card */}
+                    {/* Active stay details card list */}
                     <div className="lg:col-span-2 space-y-6">
-                      <div className="bg-gradient-to-br from-white to-slate-50 border border-slate-200 rounded-3xl p-6 shadow space-y-6">
-                        
-                        <div className="flex justify-between items-start border-b pb-4">
-                          <div>
-                            <span className="text-[9px] uppercase font-bold text-[#003366] tracking-wider block">Currently Checked-In</span>
-                            <h4 className="text-lg font-extrabold text-[#003366] font-heading mt-1">
-                              {activeStay.room_type} — Room {activeStay.room_number}
-                            </h4>
-                          </div>
-                          <span className="bg-emerald-100 text-emerald-800 text-[10px] font-extrabold px-3 py-1 rounded-full border border-emerald-200">
-                            ● Active Stay
-                          </span>
-                        </div>
-
-                        {/* Specs listing */}
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-6 text-xs text-slate-600 leading-normal">
-                          <div>
-                            <span className="font-extrabold text-[9px] uppercase text-slate-400 block tracking-wider">Guest Name</span>
-                            <span className="text-slate-800 font-bold mt-1 inline-block">{guestName}</span>
-                          </div>
-                          <div>
-                            <span className="font-extrabold text-[9px] uppercase text-slate-400 block tracking-wider">Guest ID</span>
-                            <span className="text-slate-800 font-mono font-bold mt-1 inline-block">{guestIdStr} (ID: {activeStay.guest_id})</span>
-                          </div>
-                          <div>
-                            <span className="font-extrabold text-[9px] uppercase text-slate-400 block tracking-wider">Booking ID</span>
-                            <span className="font-mono text-slate-800 font-bold mt-1 inline-block">BK-{activeStay.booking_id}</span>
-                          </div>
-                          <div>
-                            <span className="font-extrabold text-[9px] uppercase text-slate-400 block tracking-wider">Check-In Date</span>
-                            <span className="text-slate-800 font-semibold mt-1 inline-block">{activeStay.check_in_date}</span>
-                          </div>
-                          <div>
-                            <span className="font-extrabold text-[9px] uppercase text-slate-400 block tracking-wider">Check-Out Date</span>
-                            <span className="text-slate-800 font-semibold mt-1 inline-block">{activeStay.check_out_date}</span>
-                          </div>
-                          <div>
-                            <span className="font-extrabold text-[9px] uppercase text-slate-400 block tracking-wider">Stay Status</span>
-                            <span className="text-emerald-700 font-bold mt-1 inline-block">Active</span>
-                          </div>
-                          <div>
-                            <span className="font-extrabold text-[9px] uppercase text-slate-400 block tracking-wider">Channel Code</span>
-                            <span className="text-slate-800 font-semibold mt-1 inline-block">{activeStay.booking_source}</span>
-                          </div>
-                          <div>
-                            <span className="font-extrabold text-[9px] uppercase text-slate-400 block tracking-wider">Assigned Staff</span>
-                            <span className="text-slate-800 font-semibold mt-1 inline-block">{activeStay.assigned_staff || 'Front Desk'}</span>
-                          </div>
-                        </div>
-
-                        {/* Request AI Summary with WhatsApp */}
-                        <div className="border-t dark:border-slate-850 pt-4 flex justify-between items-center">
-                          <p className="text-[10px] text-slate-400 dark:text-slate-500 italic">Need formal validation or summary for this guest?</p>
-                          <button
-                            onClick={fetchAiSummary}
-                            disabled={isLoadingAi}
-                            className="bg-slate-900 hover:bg-slate-800 text-white font-bold py-2 px-4 rounded-xl text-xs uppercase tracking-wider flex items-center gap-1.5 transition-colors cursor-pointer"
+                      {activeStays.map(stay => {
+                        const isSelected = stay.booking_id === selectedActiveStayId;
+                        return (
+                          <div 
+                            key={stay.booking_id}
+                            onClick={() => { playSound('tap'); setSelectedActiveStayId(stay.booking_id); }}
+                            className={`bg-gradient-to-br from-white to-slate-50 border rounded-3xl p-6 shadow space-y-6 transition-all cursor-pointer ${
+                              isSelected ? 'border-[#D4AF37] ring-2 ring-[#D4AF37]/20 shadow-lg' : 'border-slate-200 hover:border-slate-350'
+                            }`}
                           >
-                            {isLoadingAi ? (
-                              <>
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                Synthesizing...
-                              </>
-                            ) : (
-                              <>
-                                <Sparkles className="h-3.5 w-3.5 text-[#F9D976]" />
-                                AI Summary
-                              </>
-                            )}
-                          </button>
-                        </div>
+                            <div className="flex justify-between items-start border-b pb-4">
+                              <div>
+                                <span className="text-[9px] uppercase font-bold text-[#003366] tracking-wider block">Currently Checked-In</span>
+                                <h4 className="text-lg font-extrabold text-[#003366] font-heading mt-1">
+                                  {stay.room_type} — Room {stay.room_number}
+                                </h4>
+                              </div>
+                              <span className={`text-[10px] font-extrabold px-3 py-1 rounded-full border ${
+                                isSelected ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                              }`}>
+                                {isSelected ? '★ Focused Room' : '● Checked-In'}
+                              </span>
+                            </div>
 
-                      </div>
+                            {/* Specs listing */}
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-6 text-xs text-slate-600 leading-normal">
+                              <div>
+                                <span className="font-extrabold text-[9px] uppercase text-slate-400 block tracking-wider">Guest Name</span>
+                                <span className="text-slate-800 font-bold mt-1 inline-block">{guestName}</span>
+                              </div>
+                              <div>
+                                <span className="font-extrabold text-[9px] uppercase text-slate-400 block tracking-wider">Guest ID</span>
+                                <span className="text-slate-800 font-mono font-bold mt-1 inline-block">{guestIdStr} (ID: {stay.guest_id})</span>
+                              </div>
+                              <div>
+                                <span className="font-extrabold text-[9px] uppercase text-slate-400 block tracking-wider">Booking ID</span>
+                                <span className="font-mono text-slate-800 font-bold mt-1 inline-block">BK-{stay.booking_id}</span>
+                              </div>
+                              <div>
+                                <span className="font-extrabold text-[9px] uppercase text-slate-400 block tracking-wider">Check-In Date</span>
+                                <span className="text-slate-800 font-semibold mt-1 inline-block">{stay.check_in_date}</span>
+                              </div>
+                              <div>
+                                <span className="font-extrabold text-[9px] uppercase text-slate-400 block tracking-wider">Check-Out Date</span>
+                                <span className="text-slate-800 font-semibold mt-1 inline-block">{stay.check_out_date}</span>
+                              </div>
+                              <div>
+                                <span className="font-extrabold text-[9px] uppercase text-slate-400 block tracking-wider">Stay Status</span>
+                                <span className="text-emerald-700 font-bold mt-1 inline-block">Active</span>
+                              </div>
+                              <div>
+                                <span className="font-extrabold text-[9px] uppercase text-slate-400 block tracking-wider">Channel Code</span>
+                                <span className="text-slate-800 font-semibold mt-1 inline-block">{stay.booking_source}</span>
+                              </div>
+                              <div>
+                                <span className="font-extrabold text-[9px] uppercase text-slate-400 block tracking-wider">Assigned Staff</span>
+                                <span className="text-slate-800 font-semibold mt-1 inline-block">{stay.assigned_staff || 'Front Desk'}</span>
+                              </div>
+                            </div>
+
+                            {/* Request AI Summary with WhatsApp */}
+                            <div className="border-t dark:border-slate-850 pt-4 flex justify-between items-center">
+                              <p className="text-[10px] text-slate-400 dark:text-slate-500 italic">
+                                {isSelected ? 'This room is currently selected for kitchen ordering and complaints.' : 'Click to select this room for service requests.'}
+                              </p>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedActiveStayId(stay.booking_id);
+                                  fetchAiSummary(stay);
+                                }}
+                                disabled={isLoadingAi}
+                                className="bg-slate-900 hover:bg-slate-800 text-white font-bold py-2 px-4 rounded-xl text-xs uppercase tracking-wider flex items-center gap-1.5 transition-colors cursor-pointer"
+                              >
+                                {isLoadingAi && selectedActiveStayId === stay.booking_id ? (
+                                  <>
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    Synthesizing...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Sparkles className="h-3.5 w-3.5 text-[#F9D976]" />
+                                    AI Summary
+                                  </>
+                                )}
+                              </button>
+                            </div>
+
+                          </div>
+                        );
+                      })}
 
                       {/* Prompt action guidance */}
                       <div className="bg-[#003366]/5 p-4 rounded-2xl border border-[#003366]/10 text-xs text-slate-600 leading-relaxed flex gap-3" id="notice_self_service">
                         <Info className="h-5 w-5 text-[#003366] shrink-0 mt-0.5" />
                         <div>
                           <strong className="text-[#003366] block font-heading uppercase text-[10px]">Self-Service Notice</strong>
-                          <span>You can order culinary items through the **Room Dining module** which is instantly linked to your room folio tab or lodge complaints directly with automated priority.</span>
+                          <span>You have {activeStays.length} active stays. Click on any room card to target that room for dining order placements and lodging complaints.</span>
                         </div>
                       </div>
 
@@ -1379,7 +1446,23 @@ export function GuestDashboard({ loggedInGuest, onUpdateGuest }: GuestDashboardP
                       <div className="flex justify-between items-center border-b pb-3 flex-wrap gap-3">
                         <div>
                           <h4 className="text-base font-extrabold text-[#003366] font-heading uppercase">Room service Culinary menu</h4>
-                          <p className="text-[11px] text-slate-500 mt-0.5">Fresh delicacies prepared on-demand and delivered directly to Room **{activeStay.room_number}**.</p>
+                          <div className="flex items-center gap-2 mt-1 flex-wrap">
+                            <span className="text-[11px] text-slate-500">Delivering to:</span>
+                            <select
+                              value={selectedActiveStayId || ''}
+                              onChange={(e) => {
+                                playSound('tap');
+                                setSelectedActiveStayId(Number(e.target.value));
+                              }}
+                              className="text-xs p-1 bg-slate-50 border rounded-lg focus:outline-none font-bold text-[#003366]"
+                            >
+                              {activeStays.map(stay => (
+                                <option key={stay.booking_id} value={stay.booking_id}>
+                                  Room {stay.room_number} ({stay.room_type})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
                         </div>
                         
                         {/* Food Category navigation buttons */}
@@ -1540,7 +1623,9 @@ export function GuestDashboard({ loggedInGuest, onUpdateGuest }: GuestDashboardP
                             {placedOrders.map((ord) => (
                               <div key={ord.request_id} className="p-3 bg-slate-50 border rounded-xl space-y-2 text-[10px]">
                                 <div className="flex justify-between items-center">
-                                  <span className="font-mono font-bold text-[#003366]">ORD#{ord.request_id}</span>
+                                  <span className="font-mono font-bold text-[#003366]">
+                                    ORD#{ord.request_id} {ord.room_number ? `(Room ${ord.room_number})` : ''}
+                                  </span>
                                   <span className="text-slate-400 font-sans">{new Date(ord.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>
                                 </div>
                                 <p className="text-slate-600 font-semibold line-clamp-2 leading-relaxed">{ord.request_type}</p>
@@ -1594,7 +1679,23 @@ export function GuestDashboard({ loggedInGuest, onUpdateGuest }: GuestDashboardP
                       
                       <div className="border-b pb-3">
                         <h4 className="text-base font-extrabold text-[#003366] font-heading uppercase">Lodge Guest Concern / Room Complaint</h4>
-                        <p className="text-xs text-slate-500 mt-1">Raise maintenance, sanitation, or amenity issues. Submissions are instantly processed by Gemini priority classifiers.</p>
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                          <span className="text-xs text-slate-500">Lodge concern for:</span>
+                          <select
+                            value={selectedActiveStayId || ''}
+                            onChange={(e) => {
+                              playSound('tap');
+                              setSelectedActiveStayId(Number(e.target.value));
+                            }}
+                            className="text-xs p-1 bg-slate-50 border rounded-lg focus:outline-none font-bold text-[#003366]"
+                          >
+                            {activeStays.map(stay => (
+                              <option key={stay.booking_id} value={stay.booking_id}>
+                                Room {stay.room_number} ({stay.room_type})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
 
                       {issueSuccess && (
@@ -1612,14 +1713,14 @@ export function GuestDashboard({ loggedInGuest, onUpdateGuest }: GuestDashboardP
                               value={issueCategory} onChange={(e) => setIssueCategory(e.target.value as any)}
                               className="w-full text-xs p-3 bg-slate-50 border rounded-xl focus:outline-none"
                             >
-                              <option value="Room Cleaning">Room Cleaning / Guest Services</option>
-                              <option value="Air Conditioning">Air Conditioning Problem</option>
-                              <option value="Wi-Fi">Wi-Fi Internet Disconnections</option>
-                              <option value="Television Problem">Television / DTH Issue</option>
-                              <option value="Plumbing">Plumbing / Water Leakage</option>
-                              <option value="Noise">Environmental Noise Complaint</option>
-                              <option value="Room Service">Room Service Delay</option>
-                              <option value="Other">Other Specific Concerns</option>
+                              <option value="Room Cleaning / Guest Services">Room Cleaning / Guest Services</option>
+                              <option value="Air Conditioning Problem">Air Conditioning Problem</option>
+                              <option value="Wi-Fi Internet Disconnections">Wi-Fi Internet Disconnections</option>
+                              <option value="Television / DTH Issue">Television / DTH Issue</option>
+                              <option value="Plumbing / Water Leakage">Plumbing / Water Leakage</option>
+                              <option value="Environmental Noise Complaint">Environmental Noise Complaint</option>
+                              <option value="Room Service Delay">Room Service Delay</option>
+                              <option value="Other Specific Concerns">Other Specific Concerns</option>
                             </select>
                           </div>
                           
@@ -1726,7 +1827,9 @@ export function GuestDashboard({ loggedInGuest, onUpdateGuest }: GuestDashboardP
                             return (
                               <div key={com.complaint_id} className="p-3 bg-slate-50 border rounded-2xl text-[10px] space-y-2">
                                 <div className="flex justify-between items-center bg-slate-200/50 -mx-3 -mt-3 px-3 py-1.5 rounded-t-2xl font-mono">
-                                  <span className="text-[#003366] font-bold">TKT-{com.complaint_id}</span>
+                                  <span className="text-[#003366] font-bold">
+                                    TKT-{com.complaint_id} {com.room_number ? `(Room ${com.room_number})` : ''}
+                                  </span>
                                   <span className={`font-bold px-1.5 py-0.2 rounded uppercase text-[8px] ${
                                     isResolved ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
                                   }`}>

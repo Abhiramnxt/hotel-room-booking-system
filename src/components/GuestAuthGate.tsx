@@ -394,7 +394,7 @@ export function GuestAuthGate({ loggedInGuest, onLogin, onLogout, children }: Gu
               </span>
             </div>
             <p className="text-[10px] text-[#F9D976] font-mono leading-none mt-0.5">
-              Guest ID: <strong>{loggedInGuest.guest_id_str}</strong> • Pref: {loggedInGuest.room_preference} ({loggedInGuest.stay_duration})
+              Guest ID: <strong>{loggedInGuest.guest_id_str}</strong> • Stay: {loggedInGuest.stay_duration}
             </p>
           </div>
         </div>
