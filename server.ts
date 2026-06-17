@@ -475,79 +475,85 @@ app.put('/api/corporate/:id/status', async (req, res) => {
 
 // 9. Analytics Dashboard Calculations (INR Rupiah Metrics)
 app.get('/api/analytics', async (req, res) => {
-  const rooms = await dbOps.getRooms();
-  const bookings = await dbOps.getBookings();
-  const payments = await dbOps.getPayments();
-  const feedback = await dbOps.getFeedback();
-  const complaints = await dbOps.getComplaints();
+  try {
+    const [rooms, bookings, payments, feedback, complaints, monthlyTrend] = await Promise.all([
+      dbOps.getRooms(),
+      dbOps.getBookings(),
+      dbOps.getPayments(),
+      dbOps.getFeedback(),
+      dbOps.getComplaints(),
+      dbOps.getMonthlyRevenueTrend()
+    ]);
 
-  // Financial Stats
-  const totalBookings = bookings.length;
-  const todayDate = new Date().toISOString().split('T')[0];
-  const todayBookings = bookings.filter(b => b.created_at && getFormattedDateString(b.created_at) === todayDate).length;
-  
-  // Total Revenue
-  const totalRevenue = payments
-    .filter(p => p.payment_status === 'Paid')
-    .reduce((sum, p) => sum + Number(p.amount), 0);
+    // Financial Stats
+    const totalBookings = bookings.length;
+    const todayDate = new Date().toISOString().split('T')[0];
+    const todayBookings = bookings.filter(b => b.created_at && getFormattedDateString(b.created_at) === todayDate).length;
+    
+    // Total Revenue
+    const totalRevenue = payments
+      .filter(p => p.payment_status === 'Paid')
+      .reduce((sum, p) => sum + Number(p.amount), 0);
 
-  const gstCollected = payments
-    .filter(p => p.payment_status === 'Paid')
-    .reduce((sum, p) => sum + Number(p.gst_amount), 0);
+    const gstCollected = payments
+      .filter(p => p.payment_status === 'Paid')
+      .reduce((sum, p) => sum + Number(p.gst_amount), 0);
 
-  // Simple in-memory aggregates for daily, weekly, monthly and annual
-  // Bootstrapping static reports inside node to ensure consistent telemetry charts
-  const monthlyRevenue = Math.round(totalRevenue * 1.0);
-  const annualRevenueRate = Math.round(totalRevenue * 11.5 + 120000); // Projected based on seed data
+    // Simple in-memory aggregates for daily, weekly, monthly and annual
+    // Bootstrapping static reports inside node to ensure consistent telemetry charts
+    const monthlyRevenue = Math.round(totalRevenue * 1.0);
+    const annualRevenueRate = Math.round(totalRevenue * 11.5 + 120000); // Projected based on seed data
 
-  // Room Utilization Metrics
-  const availableCount = rooms.filter(r => r.room_status === 'Available').length;
-  const occupiedCount = rooms.filter(r => r.room_status === 'Occupied').length;
-  const dirtyCount = rooms.filter(r => r.room_status === 'Dirty').length;
-  const maintenanceCount = rooms.filter(r => r.room_status === 'Maintenance').length;
-  
-  const occupancyRate = rooms.length > 0 ? Math.round((occupiedCount / rooms.length) * 100) : 0;
+    // Room Utilization Metrics
+    const availableCount = rooms.filter(r => r.room_status === 'Available').length;
+    const occupiedCount = rooms.filter(r => r.room_status === 'Occupied').length;
+    const dirtyCount = rooms.filter(r => r.room_status === 'Dirty').length;
+    const maintenanceCount = rooms.filter(r => r.room_status === 'Maintenance').length;
+    
+    const occupancyRate = rooms.length > 0 ? Math.round((occupiedCount / rooms.length) * 100) : 0;
 
-  // Customer experience aggregates
-  const feedbackCount = feedback.length;
-  const averageRating = feedbackCount > 0 
-    ? Number((feedback.reduce((sum, f) => sum + f.rating, 0) / feedbackCount).toFixed(1)) 
-    : 4.5;
+    // Customer experience aggregates
+    const feedbackCount = feedback.length;
+    const averageRating = feedbackCount > 0 
+      ? Number((feedback.reduce((sum, f) => sum + f.rating, 0) / feedbackCount).toFixed(1)) 
+      : 4.5;
 
-  const totalComplaints = complaints.length;
-  const resolvedComplaints = complaints.filter(c => c.complaint_status === 'Resolved').length;
-  const complaintResolutionRate = totalComplaints > 0 
-    ? Math.round((resolvedComplaints / totalComplaints) * 100) 
-    : 100;
+    const totalComplaints = complaints.length;
+    const resolvedComplaints = complaints.filter(c => c.complaint_status === 'Resolved').length;
+    const complaintResolutionRate = totalComplaints > 0 
+      ? Math.round((resolvedComplaints / totalComplaints) * 100) 
+      : 100;
 
-  const monthlyTrend = await dbOps.getMonthlyRevenueTrend();
-
-  res.json({
-    metrics: {
-      totalBookings,
-      todayBookings,
-      totalRevenue,
-      gstCollected,
-      monthlyRevenue,
-      annualRevenueRate,
-      availableRooms: availableCount,
-      occupiedRooms: occupiedCount,
-      dirtyRooms: dirtyCount,
-      maintenanceRooms: maintenanceCount,
-      occupancyRate,
-      feedbackCount,
-      averageRating,
-      complaintResolutionRate,
-      totalComplaints
-    },
-    popularRooms: [
-      { name: 'Deluxe Room', occupancy: 85, revenue: Math.round(totalRevenue * 0.45) },
-      { name: 'Executive Suite', occupancy: 70, revenue: Math.round(totalRevenue * 0.35) },
-      { name: 'Presidential Suite', occupancy: 40, revenue: Math.round(totalRevenue * 0.15) },
-      { name: 'Standard Room', occupancy: 90, revenue: Math.round(totalRevenue * 0.05) }
-    ],
-    monthlyTrend
-  });
+    res.json({
+      metrics: {
+        totalBookings,
+        todayBookings,
+        totalRevenue,
+        gstCollected,
+        monthlyRevenue,
+        annualRevenueRate,
+        availableRooms: availableCount,
+        occupiedRooms: occupiedCount,
+        dirtyRooms: dirtyCount,
+        maintenanceRooms: maintenanceCount,
+        occupancyRate,
+        feedbackCount,
+        averageRating,
+        complaintResolutionRate,
+        totalComplaints
+      },
+      popularRooms: [
+        { name: 'Deluxe Room', occupancy: 85, revenue: Math.round(totalRevenue * 0.45) },
+        { name: 'Executive Suite', occupancy: 70, revenue: Math.round(totalRevenue * 0.35) },
+        { name: 'Presidential Suite', occupancy: 40, revenue: Math.round(totalRevenue * 0.15) },
+        { name: 'Standard Room', occupancy: 90, revenue: Math.round(totalRevenue * 0.05) }
+      ],
+      monthlyTrend
+    });
+  } catch (err: any) {
+    console.error('[Diagnostics] Analytics error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // 10. AI Predictive & Summary Endpoints using Gemini-2.5-flash

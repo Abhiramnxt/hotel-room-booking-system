@@ -70,8 +70,8 @@ export function MessagingReportingDashboard({ onBack, currentRole = 'Front Desk 
   const [bulkActionChannels, setBulkActionChannels] = useState<'WhatsApp' | 'Email' | 'Both'>('WhatsApp');
 
   // Load all datastores to prepare actual CSV generation and dashboard alerts
-  const loadDashboardData = async () => {
-    setIsLoading(true);
+  const loadDashboardData = async (silent = false) => {
+    if (!silent) setIsLoading(true);
     try {
       // Parallel fetch all indexes from existing endpoints
       const [
@@ -220,7 +220,7 @@ export function MessagingReportingDashboard({ onBack, currentRole = 'Front Desk 
         setTestEmailStatus('success');
         setTestEmailMessage(`Test Email Delivered Successfully.`);
         showToast("✓ Test Email Sent to thunikipatiabhiram173@gmail.com!");
-        await loadDashboardData();
+        await loadDashboardData(true);
       } else {
         setTestEmailStatus('failed');
         setTestEmailMessage(data.error_message || data.reason || 'Sender Email Not Verified or Invalid API Key');
@@ -252,7 +252,7 @@ export function MessagingReportingDashboard({ onBack, currentRole = 'Front Desk 
       } else {
         showToast(`✗ Resend failed: ${data.error_message || data.reason || 'Verification criteria rejected'}`);
       }
-      await loadDashboardData();
+      await loadDashboardData(true);
     } catch (err) {
       console.error(err);
       showToast("Email delivery retry failed due to network exception.");
@@ -300,7 +300,7 @@ export function MessagingReportingDashboard({ onBack, currentRole = 'Front Desk 
         playSound('success');
         showToast(`Bulk Dispatch queue successfully initiated for ${result.count} guests!`);
         setTimeout(async () => {
-          await loadDashboardData();
+          await loadDashboardData(true);
         }, 800);
       } else {
         showToast(result.error || result.reason || "Bulk dispatch failed.");
@@ -714,12 +714,12 @@ export function MessagingReportingDashboard({ onBack, currentRole = 'Front Desk 
           playSound('success');
           showToast(`✓ Completed: ${actionType} triggered successfully!`);
           setTimeout(async () => {
-            await loadDashboardData();
+            await loadDashboardData(true);
           }, 800);
         } else {
           showToast(result.error_message || result.reason || "Automated queue packet dispatched.");
           setTimeout(async () => {
-            await loadDashboardData();
+            await loadDashboardData(true);
           }, 800);
         }
       } catch (e) {

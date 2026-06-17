@@ -25,7 +25,7 @@ interface HeaderProps {
   onBackToHome: () => void;
 }
 
-export function Header({ currentRole, onRoleChange, soundEnabled, onToggleSound, theme, onToggleTheme, onBackToHome }: HeaderProps) {
+export const Header = React.memo(function Header({ currentRole, onRoleChange, soundEnabled, onToggleSound, theme, onToggleTheme, onBackToHome }: HeaderProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [soundPopoverOpen, setSoundPopoverOpen] = useState(false);
@@ -238,4 +238,4 @@ export function Header({ currentRole, onRoleChange, soundEnabled, onToggleSound,
       </div>
     </header>
   );
-}
+});

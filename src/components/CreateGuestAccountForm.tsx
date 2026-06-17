@@ -145,6 +145,7 @@ export function CreateGuestAccountForm({ currentRole = 'Front Desk Staff' }: Cre
   }, []);
 
   useEffect(() => {
+    setCommunicationLogs([]);
     if (selectedAccount) {
       fetchLogs(selectedAccount.guest_id_str);
       // If there are ongoing transmissions, start polling right away
@@ -838,9 +839,24 @@ export function CreateGuestAccountForm({ currentRole = 'Front Desk Staff' }: Cre
                   </div>
 
                   {logsLoading && communicationLogs.length === 0 ? (
-                    <div className="py-8 text-center text-[10px] text-slate-400 flex items-center justify-center gap-2">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[#F9D976]" />
-                      <span>Requesting carrier acknowledgment log indexes...</span>
+                    <div className="py-4 space-y-2 animate-pulse" id="telemetry_logs_skeleton">
+                      <div className="grid grid-cols-6 gap-2">
+                        <div className="h-3 bg-white/10 rounded col-span-1"></div>
+                        <div className="h-3 bg-white/10 rounded col-span-1"></div>
+                        <div className="h-3 bg-white/10 rounded col-span-2"></div>
+                        <div className="h-3 bg-white/10 rounded col-span-1"></div>
+                        <div className="h-3 bg-white/10 rounded col-span-1"></div>
+                      </div>
+                      <div className="h-[1px] bg-white/5 my-1"></div>
+                      {[1, 2, 3].map((i) => (
+                        <div key={i} className="grid grid-cols-6 gap-2 pt-1">
+                          <div className="h-3 bg-white/5 rounded col-span-1"></div>
+                          <div className="h-3 bg-white/5 rounded col-span-1"></div>
+                          <div className="h-3 bg-white/5 rounded col-span-2"></div>
+                          <div className="h-3 bg-white/5 rounded col-span-1"></div>
+                          <div className="h-3 bg-white/5 rounded col-span-1"></div>
+                        </div>
+                      ))}
                     </div>
                   ) : communicationLogs.length === 0 ? (
                     <div className="py-8 text-center text-[10px] text-slate-500">

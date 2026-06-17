@@ -12,23 +12,24 @@ import {
 } from 'lucide-react';
 
 import { Header } from './components/Header';
-import { BookingModal } from './components/BookingModal';
-import { GuestDashboard } from './components/GuestDashboard';
-import { FrontDeskDashboard } from './components/FrontDeskDashboard';
-import { HousekeepingDashboard } from './components/HousekeepingDashboard';
-import { AdminDashboard } from './components/AdminDashboard';
-import { AccountsDashboard } from './components/AccountsDashboard';
 import { ThreeDText } from './components/ThreeDText';
 import { GuestAuthGate } from './components/GuestAuthGate';
-import { MessagingReportingDashboard } from './components/MessagingReportingDashboard';
 import { ManagerLoginScreen } from './components/ManagerLoginScreen';
-import { RoomDetailsPage } from './components/RoomDetailsPage';
 import { RoomImage } from './components/RoomImage';
 
 import { Room, UserRole, GuestAccount } from './types';
 import { playSound } from './soundUtils';
 
 const ChatbotWidget = React.lazy(() => import('./components/ChatbotWidget'));
+
+const BookingModal = React.lazy(() => import('./components/BookingModal').then(m => ({ default: m.BookingModal })));
+const GuestDashboard = React.lazy(() => import('./components/GuestDashboard').then(m => ({ default: m.GuestDashboard })));
+const FrontDeskDashboard = React.lazy(() => import('./components/FrontDeskDashboard').then(m => ({ default: m.FrontDeskDashboard })));
+const HousekeepingDashboard = React.lazy(() => import('./components/HousekeepingDashboard').then(m => ({ default: m.HousekeepingDashboard })));
+const AdminDashboard = React.lazy(() => import('./components/AdminDashboard').then(m => ({ default: m.AdminDashboard })));
+const AccountsDashboard = React.lazy(() => import('./components/AccountsDashboard').then(m => ({ default: m.AccountsDashboard })));
+const MessagingReportingDashboard = React.lazy(() => import('./components/MessagingReportingDashboard').then(m => ({ default: m.MessagingReportingDashboard })));
+const RoomDetailsPage = React.lazy(() => import('./components/RoomDetailsPage').then(m => ({ default: m.RoomDetailsPage })));
 
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -80,6 +81,29 @@ export default function App() {
   const [corpRooms, setCorpRooms] = useState(5);
   const [isSubmittingCorp, setIsSubmittingCorp] = useState(false);
   const [corpSuccess, setCorpSuccess] = useState(false);
+
+  const handleRoleChange = React.useCallback((role: UserRole) => {
+    setCurrentRole(role);
+    setDashboardTab('operations');
+    if (role === 'Guest') {
+      setLandingPage('home');
+    }
+  }, []);
+
+  const handleToggleTheme = React.useCallback(() => {
+    setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+  }, []);
+
+  const handleBackToHome = React.useCallback(() => {
+    setCurrentRole('Guest');
+    setLandingPage('home');
+    setLoggedInGuest(null);
+    setDetailedRoom(null);
+  }, []);
+
+  const handleSwitchToOperations = React.useCallback(() => {
+    setDashboardTab('operations');
+  }, []);
 
   const fetchRooms = async (silent = false) => {
     if (!silent) setIsLoadingRooms(true);
@@ -176,32 +200,28 @@ export default function App() {
       {/* Top sticky brand header and options bar */}
       <Header 
         currentRole={currentRole} 
-        onRoleChange={(role) => {
-          setCurrentRole(role);
-          setDashboardTab('operations');
-          if (role === 'Guest') {
-            setLandingPage('home');
-          }
-        }}
+        onRoleChange={handleRoleChange}
         soundEnabled={soundEnabled}
         onToggleSound={setSoundEnabled}
         theme={theme}
-        onToggleTheme={() => {
-          setTheme(prev => prev === 'dark' ? 'light' : 'dark');
-        }}
-        onBackToHome={() => {
-          setCurrentRole('Guest');
-          setLandingPage('home');
-          setLoggedInGuest(null);
-          setDetailedRoom(null);
-        }}
+        onToggleTheme={handleToggleTheme}
+        onBackToHome={handleBackToHome}
       />
 
       {/* Main Core Viewport */}
       <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" id="main_viewport_content">
-        
-        {/* Dynamic page switches based on active roles selected */}
-        {currentRole === 'Guest' && (
+        <React.Suspense fallback={
+          <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4">
+            <div className="flex space-x-2">
+              <div className="w-4.5 h-4.5 bg-[#003366] rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+              <div className="w-4.5 h-4.5 bg-[#D4AF37] rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+              <div className="w-4.5 h-4.5 bg-[#001f3f] rounded-full animate-bounce"></div>
+            </div>
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-widest animate-pulse">Loading modules...</p>
+          </div>
+        }>
+          {/* Dynamic page switches based on active roles selected */}
+          {currentRole === 'Guest' && (
           <>
             {!loggedInGuest && landingPage === 'home' && (
               <div className="max-w-4xl mx-auto py-12 space-y-8 animate-fade-in" id="luxury_homepage_container">
@@ -758,33 +778,59 @@ export default function App() {
           </div>
         )}
 
-        {dashboardTab === 'messaging' && ['Front Desk Staff', 'Hotel Manager'].includes(currentRole) ? (
-          <motion.div
-            initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }}
-            className="space-y-6"
-          >
-            <MessagingReportingDashboard onBack={() => { setDashboardTab('operations'); }} currentRole={currentRole} />
-          </motion.div>
-        ) : (
+        {['Front Desk Staff', 'Hotel Manager'].includes(currentRole) ? (
           <>
-            {currentRole === 'Front Desk Staff' && (
-              <motion.div 
+            {/* Messaging Tab */}
+            <div className={dashboardTab === 'messaging' ? 'space-y-6' : 'hidden'}>
+              <motion.div
                 initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }}
                 className="space-y-6"
               >
-                <div className="border-b pb-4">
-                  <h2 className="text-2xl font-bold tracking-tight text-slate-950 font-heading">
-                    Front Desk Operations Panel
-                  </h2>
-                  <p className="text-xs text-slate-600 mt-1">
-                    Acknowledge incoming stays, execute check-in documents scans, or checkout finished stays.
-                  </p>
-                </div>
-                
-                <FrontDeskDashboard currentRole={currentRole} />
+                <MessagingReportingDashboard onBack={handleSwitchToOperations} currentRole={currentRole} />
               </motion.div>
-            )}
+            </div>
 
+            {/* Core Operations Tab */}
+            <div className={dashboardTab === 'operations' ? 'space-y-6' : 'hidden'}>
+              {currentRole === 'Front Desk Staff' && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }}
+                  className="space-y-6"
+                >
+                  <div className="border-b pb-4">
+                    <h2 className="text-2xl font-bold tracking-tight text-slate-950 font-heading">
+                      Front Desk Operations Panel
+                    </h2>
+                    <p className="text-xs text-slate-600 mt-1">
+                      Acknowledge incoming stays, execute check-in documents scans, or checkout finished stays.
+                    </p>
+                  </div>
+                  
+                  <FrontDeskDashboard currentRole={currentRole} />
+                </motion.div>
+              )}
+
+              {currentRole === 'Hotel Manager' && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }}
+                  className="space-y-6"
+                >
+                  <div className="border-b pb-4">
+                    <h2 className="text-2xl font-bold tracking-tight text-slate-950 font-heading">
+                      Hotel Manager Operations Suite
+                    </h2>
+                    <p className="text-xs text-slate-600 mt-1">
+                      Monitor Indian Rupee billing summaries, accept corporate inquiries, or query custom tables.
+                    </p>
+                  </div>
+
+                  <AdminDashboard currentRole={currentRole} />
+                </motion.div>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
             {(currentRole === 'Housekeeping Staff' || currentRole === 'Housekeeping Team') && (
               <motion.div 
                 initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }}
@@ -820,29 +866,12 @@ export default function App() {
                 <AccountsDashboard />
               </motion.div>
             )}
-
-            {currentRole === 'Hotel Manager' && (
-              <motion.div 
-                initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }}
-                className="space-y-6"
-              >
-                <div className="border-b pb-4">
-                  <h2 className="text-2xl font-bold tracking-tight text-slate-950 font-heading">
-                    Hotel Manager Operations Suite
-                  </h2>
-                  <p className="text-xs text-slate-600 mt-1">
-                    Monitor Indian Rupee billing summaries, accept corporate inquiries, or query custom tables.
-                  </p>
-                </div>
-
-                <AdminDashboard currentRole={currentRole} />
-              </motion.div>
-            )}
           </>
         )}
 
 
 
+        </React.Suspense>
       </main>
 
       {/* FOOTER */}
@@ -888,26 +917,30 @@ export default function App() {
 
       {/* RENDER RESERVATION MODAL ON TOP IF INITIATED */}
       {selectedRoomToBook && (
-        <BookingModal 
-          room={selectedRoomToBook}
-          checkInDate={checkInDate}
-          checkOutDate={checkOutDate}
-          onClose={() => setSelectedRoomToBook(null)}
-          onBookingSuccess={handleBookingComplete}
-        />
+        <React.Suspense fallback={null}>
+          <BookingModal 
+            room={selectedRoomToBook}
+            checkInDate={checkInDate}
+            checkOutDate={checkOutDate}
+            onClose={() => setSelectedRoomToBook(null)}
+            onBookingSuccess={handleBookingComplete}
+          />
+        </React.Suspense>
       )}
 
       {/* RENDER POWERFUL EXQUISITE DETAIL PAGE OVERLAY */}
       {detailedRoom && (
-        <RoomDetailsPage 
-          room={detailedRoom}
-          allRooms={rooms}
-          currentCheckIn={checkInDate}
-          currentCheckOut={checkOutDate}
-          onClose={() => setDetailedRoom(null)}
-          onBookNow={handleBookNowFromDetails}
-          onSelectRoom={(r) => setDetailedRoom(r)}
-        />
+        <React.Suspense fallback={null}>
+          <RoomDetailsPage 
+            room={detailedRoom}
+            allRooms={rooms}
+            currentCheckIn={checkInDate}
+            currentCheckOut={checkOutDate}
+            onClose={() => setDetailedRoom(null)}
+            onBookNow={handleBookNowFromDetails}
+            onSelectRoom={(r) => setDetailedRoom(r)}
+          />
+        </React.Suspense>
       )}
 
       {/* LAZY LOADED GUEST AI ASSISTANT CHATBOT */}
