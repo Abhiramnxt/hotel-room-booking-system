@@ -220,7 +220,7 @@ export function RoomDetailsPage({
         </div>
 
         {/* Core details view body layout */}
-        <div className="p-6 md:p-8 overflow-y-auto space-y-8 flex-1">
+        <div className="p-6 md:p-8 space-y-8 flex-1">
           
           {/* Section 1: Header */}
           <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-4 pb-6 border-b border-white/10">

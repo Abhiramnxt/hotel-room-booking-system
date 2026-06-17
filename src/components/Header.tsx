@@ -111,10 +111,10 @@ export function Header({ currentRole, onRoleChange, soundEnabled, onToggleSound,
               <span className="text-[#001f3f] font-extrabold text-xl font-sans tracking-tight">SN</span>
             </motion.div>
             <div>
-              <h1 className="text-xl font-bold tracking-tight text-white leading-none uppercase text-lg animate-fade-in">
+              <h1 className="text-xs sm:text-base md:text-xl font-bold tracking-tight text-white leading-none uppercase animate-fade-in">
                 <ThreeDText text="Sai Nirvana Plaza" hoverColor="#F9D976" gradient={true} />
               </h1>
-              <p className="text-[#F9D976] text-[10px] uppercase tracking-widest font-semibold mt-1">
+              <p className="text-[#F9D976] text-[9px] sm:text-[10px] uppercase tracking-widest font-semibold mt-1 hidden sm:block">
                 Great Hospitality, Easy Booking
               </p>
             </div>
@@ -162,14 +162,14 @@ export function Header({ currentRole, onRoleChange, soundEnabled, onToggleSound,
                 <div className="relative" ref={dropdownRef} id="dynamic_role_dropdown_container">
                   <button
                     onClick={() => { playSound('tap'); setDropdownOpen(!dropdownOpen); }}
-                    className="w-[190px] h-[44px] bg-white hover:bg-[#D4AF37]/10 border border-slate-200 hover:border-[#D4AF37] hover:scale-[1.02] text-[#0f172a] rounded-xl shadow-md font-sans text-xs font-bold uppercase tracking-wider cursor-pointer flex items-center justify-between px-3 transition-all duration-300"
+                    className="w-[130px] sm:w-[190px] h-[44px] bg-white hover:bg-[#D4AF37]/10 border border-slate-200 hover:border-[#D4AF37] hover:scale-[1.02] text-[#0f172a] rounded-xl shadow-md font-sans text-[10px] sm:text-xs font-bold uppercase tracking-wider cursor-pointer flex items-center justify-between px-1.5 sm:px-3 transition-all duration-300"
                     id="btn_role_dropdown_selector"
                   >
-                    <div className="flex items-center gap-2 truncate">
-                      <currentRoleObj.icon className={`h-4 w-4 ${currentRoleObj.color}`} />
+                    <div className="flex items-center gap-1 sm:gap-2 truncate">
+                      <currentRoleObj.icon className={`h-4 w-4 flex-shrink-0 ${currentRoleObj.color}`} />
                       <span className="truncate">{currentRoleObj.label}</span>
                     </div>
-                    <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform flex-shrink-0 ${dropdownOpen ? 'rotate-180' : ''}`} />
+                    <ChevronDown className={`h-3 w-3 sm:h-4 sm:w-4 text-slate-500 transition-transform flex-shrink-0 ${dropdownOpen ? 'rotate-180' : ''}`} />
                   </button>
 
                   {/* Dropdown Frame with Motion Animation */}
@@ -180,7 +180,7 @@ export function Header({ currentRole, onRoleChange, soundEnabled, onToggleSound,
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: -8, scale: 0.95 }}
                         transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-                        className="absolute right-0 mt-2 w-[190px] bg-white border border-slate-200/90 rounded-xl shadow-xl overflow-hidden py-1.5 z-50 divide-y divide-slate-100"
+                        className="absolute right-0 mt-2 w-[170px] sm:w-[190px] bg-white border border-slate-200/90 rounded-xl shadow-xl overflow-hidden py-1.5 z-50 divide-y divide-slate-100"
                         id="role_dropdown_menu_panel"
                       >
                         <div className="py-1">
@@ -191,17 +191,17 @@ export function Header({ currentRole, onRoleChange, soundEnabled, onToggleSound,
                               <button
                                 key={role.value}
                                 onClick={() => handleRoleSelect(role.value)}
-                                className={`group w-full text-left px-3.5 py-2.5 flex items-center justify-between transition-all duration-300 cursor-pointer border-l-4 border-l-transparent hover:border-l-[#D4AF37] hover:bg-[#D4AF37]/10 ${
+                                className={`group w-full text-left px-2 py-2 sm:px-3.5 sm:py-2.5 flex items-center justify-between transition-all duration-300 cursor-pointer border-l-4 border-l-transparent hover:border-l-[#D4AF37] hover:bg-[#D4AF37]/10 ${
                                   isSelected 
                                     ? 'bg-[#0f172a] text-[#D4AF37] hover:bg-[#0f172a]/95' 
                                     : 'text-slate-800 hover:text-[#0f172a]'
                                 }`}
                               >
-                                <div className="flex items-center gap-2 truncate">
+                                <div className="flex items-center gap-1.5 sm:gap-2 truncate">
                                   <Icon className={`h-3.5 w-3.5 flex-shrink-0 ${isSelected ? 'text-[#D4AF37]' : role.color}`} />
                                   
                                   {/* Normal: RoleName, Hover: ► RoleName */}
-                                  <span className="text-[11.5px] font-bold uppercase tracking-wide transition-all duration-300 flex items-center gap-1.5 truncate">
+                                  <span className="text-[10px] sm:text-[11.5px] font-bold uppercase tracking-wide transition-all duration-300 flex items-center gap-1.5 truncate">
                                     <span className="opacity-0 w-0 group-hover:opacity-100 group-hover:w-auto transition-all duration-300 text-[#D4AF37] text-[10px] font-mono">►</span>
                                     <span className="group-hover:translate-x-0.5 transition-transform duration-300">{role.label}</span>
                                   </span>

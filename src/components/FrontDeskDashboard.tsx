@@ -368,10 +368,10 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
     <div className="space-y-6" id="front_desk_dashboard">
       
       {/* Tab Switcher */}
-      <div className="flex border-b border-slate-200 gap-2 mb-2">
+      <div className="flex border-b border-slate-200 gap-2 mb-2 overflow-x-auto whitespace-nowrap scrollbar-none no-scrollbar">
         <button
           onClick={() => { playSound('tap'); setActiveTab('stays'); }}
-          className={`px-5 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 cursor-pointer ${
+          className={`px-5 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 cursor-pointer flex-shrink-0 ${
             activeTab === 'stays'
               ? 'border-[#003366] text-[#003366]'
               : 'border-transparent text-slate-500 hover:text-slate-700'
@@ -381,7 +381,7 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
         </button>
         <button
           onClick={() => { playSound('tap'); setActiveTab('credentials'); }}
-          className={`px-5 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 cursor-pointer ${
+          className={`px-5 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 cursor-pointer flex-shrink-0 ${
             activeTab === 'credentials'
               ? 'border-[#003366] text-[#003366]'
               : 'border-transparent text-slate-500 hover:text-slate-700'
@@ -391,7 +391,7 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
         </button>
         <button
           onClick={() => { playSound('tap'); setActiveTab('rooms'); }}
-          className={`px-5 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 cursor-pointer ${
+          className={`px-5 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 cursor-pointer flex-shrink-0 ${
             activeTab === 'rooms'
               ? 'border-[#003366] text-[#003366]'
               : 'border-transparent text-slate-500 hover:text-slate-700'
@@ -582,7 +582,7 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-left font-sans text-xs">
+                <table className="w-full min-w-[950px] text-left font-sans text-xs">
                   <thead>
                     <tr className="bg-slate-50 text-slate-600 font-bold uppercase border-b border-slate-200">
                       <th className="p-4 w-10 text-center">

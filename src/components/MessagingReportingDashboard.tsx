@@ -1653,7 +1653,7 @@ export function MessagingReportingDashboard({ onBack, currentRole = 'Front Desk 
           </div>
         ) : (
           <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
-            <table className="w-full text-left text-xs border-collapse">
+            <table className="w-full min-w-[1000px] text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-50 dark:bg-[#111827] text-slate-700 dark:text-slate-200 font-bold uppercase text-[9px] border-b border-slate-200 dark:border-slate-700 tracking-wider">
                   <th className="py-3 px-4">Timestamp</th>
@@ -1881,7 +1881,7 @@ export function MessagingReportingDashboard({ onBack, currentRole = 'Front Desk 
 
                 {/* Report Table data Grid */}
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs border-collapse">
+                  <table className="w-full min-w-[800px] text-left text-xs border-collapse">
                     <thead>
                       <tr className="bg-slate-100 text-slate-800 font-bold uppercase text-[9px] border-b border-t border-slate-300">
                         {activeReportPdf.headers.map((h: string, idx: number) => (

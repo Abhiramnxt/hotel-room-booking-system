@@ -214,7 +214,7 @@ export function AccountsDashboard() {
             </div>
           ) : (
             <div className="overflow-x-auto w-full">
-              <table className="w-full min-w-[700px] text-left text-xs table-layout-fixed">
+              <table className="w-full min-w-[1040px] text-left text-xs table-layout-fixed">
                 <thead>
                   <tr className="bg-slate-50 text-slate-600 font-bold border-b">
                     <th className="p-3 w-24">Payment ID</th>

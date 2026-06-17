@@ -297,7 +297,7 @@ function InnerAdminDashboard({ currentRole = 'Hotel Manager' }: AdminDashboardPr
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs font-sans">
+            <table className="w-full min-w-[900px] text-left text-xs font-sans">
               <thead>
                 <tr className="bg-slate-100/50 text-slate-600 font-bold border-b">
                   <th className="p-4">Corporate Client</th>

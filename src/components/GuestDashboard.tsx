@@ -990,7 +990,7 @@ export function GuestDashboard({ loggedInGuest, onUpdateGuest }: GuestDashboardP
           <button
             key={tb.key} id={tb.id}
             onClick={() => { playSound('tap'); setActiveTab(tb.key as any); }}
-            className={`px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+            className={`px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-all whitespace-nowrap cursor-pointer flex-shrink-0 flex items-center gap-1.5 ${
               activeTab === tb.key 
                 ? 'bg-[#003366] text-[#F9D976] shadow-sm border border-[#D4AF37]/45' 
                 : 'bg-white hover:bg-slate-100 text-slate-600 border'

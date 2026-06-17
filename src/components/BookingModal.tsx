@@ -147,10 +147,10 @@ export function BookingModal({ room, checkInDate, checkOutDate, onClose, onBooki
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm" id="booking_modal_overlay">
-      <div className="bg-white rounded-2xl max-w-4xl w-full shadow-2xl overflow-hidden border border-slate-100 flex flex-col md:flex-row max-h-[90vh]" id="booking_modal_inner">
+      <div className="bg-white rounded-2xl max-w-4xl w-full shadow-2xl overflow-y-auto md:overflow-hidden border border-slate-100 flex flex-col md:flex-row max-h-full md:max-h-[90vh]" id="booking_modal_inner">
         
         {/* Left Side: Booking fields Form */}
-        <div className="flex-1 p-6 md:p-8 overflow-y-auto">
+        <div className="flex-1 p-6 md:p-8 md:overflow-y-auto">
           <div className="flex justify-between items-center pb-4 border-b">
             <div>
               <h3 className="text-xl font-bold text-slate-900 font-heading">
@@ -295,7 +295,7 @@ export function BookingModal({ room, checkInDate, checkOutDate, onClose, onBooki
         </div>
 
         {/* Right Side: Stay Summary, Cost & AI recommendations */}
-        <div className="w-full md:w-[360px] bg-gradient-to-b from-[#001f3f] to-[#002b54] text-white p-6 md:p-8 flex flex-col justify-between border-t md:border-t-0 md:border-l border-[#D4AF37]/25 overflow-y-auto">
+        <div className="w-full md:w-[360px] bg-gradient-to-b from-[#001f3f] to-[#002b54] text-white p-6 md:p-8 flex flex-col justify-between border-t md:border-t-0 md:border-l border-[#D4AF37]/25 md:overflow-y-auto">
           <div className="space-y-6">
             
             {/* Selected Cabin/Room Block */}
