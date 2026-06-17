@@ -115,7 +115,7 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
       });
       if (res.ok) {
         playSound('success');
-        fetchBookings();
+        fetchBookings(true);
         // Immediately notify GuestDashboard of the status change
         broadcastBookingStatusChange();
         setActiveVerifyBooking(null);
@@ -138,7 +138,7 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
       if (res.ok) {
         playSound('success');
         showLocalToast(`Room ${room.room_number} successfully cleaned and released for booking.`);
-        fetchBookings(); // Refreshes bookings and rooms list
+        fetchBookings(true); // Refreshes bookings and rooms list
         setResetRoomConfirm(null);
       } else {
         const err = await res.json();
@@ -169,7 +169,7 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
       if (res.ok) {
         playSound('success');
         setIdVerified(true);
-        fetchBookings();
+        fetchBookings(true);
         // Immediately notify GuestDashboard of the verification/check-in status change
         broadcastBookingStatusChange();
       }
@@ -212,7 +212,7 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
       if (res.ok) {
         playSound('success');
         setCancelTargetBooking(null);
-        fetchBookings(); // Refresh the ledger immediately
+        fetchBookings(true); // Refresh the ledger immediately
       } else {
         const errData = await res.json();
         setCancelError(errData.error || 'Unable to cancel this booking.');
@@ -307,7 +307,7 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
         playSound('success');
         showLocalToast(`Successfully ${archive ? 'archived' : 'restored'} ${selectedBookingIds.length} records.`);
         setSelectedBookingIds([]);
-        fetchBookings();
+        fetchBookings(true);
       } else {
         showLocalToast(`Failed to update archive status.`, 'error');
       }
@@ -547,7 +547,7 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
                 </button>
 
                 <button
-                  onClick={fetchBookings}
+                  onClick={() => fetchBookings(true)}
                   className="bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold p-2.5 rounded-lg transition-colors cursor-pointer"
                   title="Force Refresh Live Database"
                 >
@@ -569,10 +569,24 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
               </span>
             </div>
 
-            {isLoading ? (
-              <div className="py-20 text-center text-xs text-slate-400 space-y-2">
-                <RefreshCw className="h-5 w-5 animate-spin mx-auto text-indigo-600" />
-                <p>Scanning relational index entries...</p>
+            {isLoading && bookings.length === 0 ? (
+              <div className="p-6 space-y-3 animate-pulse" id="bookings_ledger_skeleton">
+                <div className="grid grid-cols-6 gap-3 border-b pb-2">
+                  <div className="h-4 bg-slate-200 rounded col-span-1"></div>
+                  <div className="h-4 bg-slate-200 rounded col-span-2"></div>
+                  <div className="h-4 bg-slate-200 rounded col-span-1"></div>
+                  <div className="h-4 bg-slate-200 rounded col-span-1"></div>
+                  <div className="h-4 bg-slate-200 rounded col-span-1"></div>
+                </div>
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <div key={i} className="grid grid-cols-6 gap-3 py-2 border-b border-slate-100">
+                    <div className="h-3 bg-slate-100/80 rounded col-span-1"></div>
+                    <div className="h-3 bg-slate-100/80 rounded col-span-2"></div>
+                    <div className="h-3 bg-slate-100/80 rounded col-span-1"></div>
+                    <div className="h-3 bg-slate-100/80 rounded col-span-1"></div>
+                    <div className="h-3 bg-slate-100/80 rounded col-span-1"></div>
+                  </div>
+                ))}
               </div>
             ) : filteredBookings.length === 0 ? (
               <div className="py-16 text-center text-xs text-slate-400">
@@ -672,7 +686,7 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
                                       if (res.ok) {
                                         playSound('success');
                                         showLocalToast(`Successfully restored stay record BK-${booking.booking_id}.`);
-                                        fetchBookings();
+                                        fetchBookings(true);
                                       }
                                     } catch (e) {
                                       console.warn(e);
@@ -836,7 +850,7 @@ export function FrontDeskDashboard({ currentRole = 'Front Desk Staff' }: FrontDe
               </div>
 
               <button
-                onClick={fetchBookings}
+                onClick={() => fetchBookings(true)}
                 disabled={isLoading}
                 className="shrink-0 bg-white/10 hover:bg-white/20 text-[#F9D976] hover:text-[#fff] text-xs font-bold px-4 py-2.5 rounded-xl border border-white/15 transition-all flex items-center gap-1.5 cursor-pointer uppercase shadow"
               >

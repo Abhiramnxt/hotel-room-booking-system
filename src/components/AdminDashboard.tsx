@@ -65,8 +65,8 @@ function InnerAdminDashboard({ currentRole = 'Hotel Manager' }: AdminDashboardPr
   const [feedback, setFeedback] = useState<Feedback[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  const fetchStats = async () => {
-    setIsLoading(true);
+  const fetchStats = async (silent = false) => {
+    if (!silent) setIsLoading(true);
     try {
       const [res, corpRes, fbRes] = await Promise.all([
         fetch('/api/analytics'),
@@ -112,7 +112,7 @@ function InnerAdminDashboard({ currentRole = 'Hotel Manager' }: AdminDashboardPr
       });
       if (res.ok) {
         playSound('success');
-        fetchStats();
+        fetchStats(true);
       }
     } catch (e) {
       console.warn(e);
@@ -132,7 +132,7 @@ function InnerAdminDashboard({ currentRole = 'Hotel Manager' }: AdminDashboardPr
         </div>
 
         <button
-          onClick={fetchStats}
+          onClick={() => fetchStats(true)}
           className="bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold px-4 py-2.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
         >
           <RefreshCw className="h-4 w-4" />

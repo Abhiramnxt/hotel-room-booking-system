@@ -194,9 +194,12 @@ export default function ChatbotWidget() {
               {/* Loader Skeleton / Typing indicator */}
               {isLoading && (
                 <div className="flex flex-col items-start max-w-[85%] mr-auto">
-                  <div className="bg-slate-900/90 border border-[#D4AF37]/20 text-xs px-3.5 py-3 rounded-2xl rounded-tl-sm shadow-md flex items-center gap-2">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin text-[#F9D976]" />
-                    <span className="text-slate-400 font-mono text-[10px]">Formulating response...</span>
+                  <div className="bg-slate-900/90 border border-[#D4AF37]/20 text-xs px-3.5 py-3 rounded-2xl rounded-tl-sm shadow-md flex items-center">
+                    <div className="flex space-x-1.5 items-center h-2 py-1 px-1">
+                      <div className="w-1.5 h-1.5 bg-[#F9D976] rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                      <div className="w-1.5 h-1.5 bg-[#F9D976] rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                      <div className="w-1.5 h-1.5 bg-[#F9D976] rounded-full animate-bounce"></div>
+                    </div>
                   </div>
                 </div>
               )}

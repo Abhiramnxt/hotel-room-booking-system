@@ -34,8 +34,8 @@ export function AccountsDashboard() {
     { id: 2, action: "Invoice #104 status reconciled", user: "Accounts Officer", date: new Date().toISOString() }
   ]);
 
-  const fetchPayments = async () => {
-    setIsLoading(true);
+  const fetchPayments = async (silent = false) => {
+    if (!silent) setIsLoading(true);
     try {
       const res = await fetch('/api/payments');
       if (res.ok) {
@@ -77,7 +77,7 @@ export function AccountsDashboard() {
           date: new Date().toISOString()
         };
         setAuditLogs(prev => [newLog, ...prev]);
-        fetchPayments();
+        fetchPayments(true);
       }
     } catch (e) {
       console.warn(e);
@@ -206,8 +206,25 @@ export function AccountsDashboard() {
             </div>
           </div>
 
-          {isLoading ? (
-            <div className="py-12 text-center text-xs text-slate-400">Syncing transaction registry...</div>
+          {isLoading && payments.length === 0 ? (
+            <div className="py-6 space-y-3 animate-pulse" id="payments_ledger_skeleton">
+              <div className="grid grid-cols-5 gap-3 border-b pb-2">
+                <div className="h-4 bg-slate-200 rounded col-span-1"></div>
+                <div className="h-4 bg-slate-200 rounded col-span-1"></div>
+                <div className="h-4 bg-slate-200 rounded col-span-1"></div>
+                <div className="h-4 bg-slate-200 rounded col-span-1"></div>
+                <div className="h-4 bg-slate-200 rounded col-span-1"></div>
+              </div>
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="grid grid-cols-5 gap-3 py-2 border-b border-slate-100">
+                  <div className="h-3 bg-slate-100/80 rounded col-span-1"></div>
+                  <div className="h-3 bg-slate-100/80 rounded col-span-1"></div>
+                  <div className="h-3 bg-slate-100/80 rounded col-span-1"></div>
+                  <div className="h-3 bg-slate-100/80 rounded col-span-1"></div>
+                  <div className="h-3 bg-slate-100/80 rounded col-span-1"></div>
+                </div>
+              ))}
+            </div>
           ) : filteredPayments.length === 0 ? (
             <div className="py-12 text-center text-xs text-slate-400">
               No matching accounts records in database schema.
