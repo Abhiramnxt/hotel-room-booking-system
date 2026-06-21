@@ -9,6 +9,7 @@ import {
   Staff, SqlQueryLog, GuestAccount, CommunicationLog, RoomAvailability
 } from './types.js';
 import { initMysqlPool, query, execute, getPool } from './mysql_client.js';
+import crypto from 'crypto';
 
 // SQL query logs in memory for the Consistency Check Dashboard
 let queryLogs: SqlQueryLog[] = [];
@@ -67,12 +68,38 @@ export function formatDate(d: any): string {
 }
 
 // Bootstrap DB
+async function addColumnIfNotExist(tableName: string, columnName: string, columnDef: string) {
+  try {
+    const columns = await query(`SHOW COLUMNS FROM ${tableName} LIKE ?`, [columnName]);
+    if (columns.length === 0) {
+      console.log(`[Database] Adding column ${columnName} to ${tableName}...`);
+      await execute(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDef}`);
+    }
+  } catch (err) {
+    console.error(`[Database] Error adding column ${columnName} to ${tableName}:`, err);
+  }
+}
+
 export async function initDB() {
   try {
     initMysqlPool();
     console.log('[Database] MySQL pool initialized successfully.');
+
+    // Dynamic schema updates
+    await addColumnIfNotExist('guest_accounts', 'gender', 'VARCHAR(50) DEFAULT NULL');
+    await addColumnIfNotExist('guest_accounts', 'city', 'VARCHAR(255) DEFAULT NULL');
+    await addColumnIfNotExist('guest_accounts', 'preferred_room_type', 'VARCHAR(100) DEFAULT NULL');
+    await addColumnIfNotExist('guest_accounts', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
+
+    await addColumnIfNotExist('guests', 'gender', 'VARCHAR(50) DEFAULT NULL');
+    await addColumnIfNotExist('guests', 'city', 'VARCHAR(255) DEFAULT NULL');
+    await addColumnIfNotExist('guests', 'preferred_room_type', 'VARCHAR(100) DEFAULT NULL');
+    await addColumnIfNotExist('guests', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
+
+    await addColumnIfNotExist('complaints', 'assigned_staff', 'VARCHAR(255) DEFAULT NULL');
+    await addColumnIfNotExist('room_service_requests', 'assigned_staff', 'VARCHAR(255) DEFAULT NULL');
   } catch (err) {
-    console.error('[Database] Failed to initialize MySQL pool:', err);
+    console.error('[Database] Failed to initialize MySQL pool or update schema:', err);
   }
 }
 
@@ -139,6 +166,67 @@ export const dbOps = {
     });
   },
 
+  getBookingById: (id: number) => {
+    const sql = `
+      SELECT b.*, g.full_name AS guest_name, g.email AS guest_email, g.mobile_number AS guest_phone,
+             r.room_number, r.room_type, r.price_per_night
+      FROM bookings b
+      LEFT JOIN guests g ON b.guest_id = g.guest_id
+      LEFT JOIN rooms r ON b.room_id = r.room_id
+      WHERE b.booking_id = ${id};
+    `;
+    return executeQueryAsync(sql, ['bookings', 'guests', 'rooms'], async () => {
+      const rows = await query(`
+        SELECT b.*, g.full_name AS guest_name, g.email AS guest_email, g.mobile_number AS guest_phone,
+               r.room_number, r.room_type, r.price_per_night
+        FROM bookings b
+        LEFT JOIN guests g ON b.guest_id = g.guest_id
+        LEFT JOIN rooms r ON b.room_id = r.room_id
+        WHERE b.booking_id = ?;
+      `, [id]);
+      if (rows.length === 0) return null;
+      const r = rows[0];
+      return {
+        ...r,
+        check_in_date: formatDate(r.check_in_date),
+        check_out_date: formatDate(r.check_out_date),
+        is_archived: !!r.is_archived
+      };
+    });
+  },
+
+  getGuestById: (id: number) => {
+    const sql = `SELECT * FROM guests WHERE guest_id = ${id};`;
+    return executeQueryAsync(sql, ['guests'], async () => {
+      const rows = await query(`SELECT * FROM guests WHERE guest_id = ?;`, [id]);
+      return rows[0] || null;
+    });
+  },
+
+  getGuestByEmail: (email: string) => {
+    const sql = `SELECT * FROM guests WHERE LOWER(email) = LOWER('${email}');`;
+    return executeQueryAsync(sql, ['guests'], async () => {
+      const rows = await query('SELECT * FROM guests WHERE LOWER(email) = LOWER(?)', [email]);
+      return rows[0] || null;
+    });
+  },
+
+  getLatestBookingForGuest: (guestId: number) => {
+    const sql = `SELECT * FROM bookings WHERE guest_id = ${guestId} ORDER BY booking_id DESC LIMIT 1;`;
+    return executeQueryAsync(sql, ['bookings'], async () => {
+      const rows = await query('SELECT * FROM bookings WHERE guest_id = ? ORDER BY booking_id DESC LIMIT 1', [guestId]);
+      return rows[0] || null;
+    });
+  },
+
+  getLatestBookingForEmail: (email: string) => {
+    const sql = `SELECT * FROM bookings WHERE LOWER(guest_email) = LOWER('${email}') ORDER BY booking_id DESC LIMIT 1;`;
+    return executeQueryAsync(sql, ['bookings'], async () => {
+      const rows = await query('SELECT * FROM bookings WHERE LOWER(guest_email) = LOWER(?) ORDER BY booking_id DESC LIMIT 1', [email]);
+      return rows[0] || null;
+    });
+  },
+
   getActiveStays: () => {
     const sql = `
       SELECT a.*, g.full_name AS guest_name, g.email AS guest_email, g.mobile_number AS guest_phone,
@@ -170,7 +258,7 @@ export const dbOps = {
 
   getComplaints: () => {
     const sql = `
-      SELECT c.*, g.full_name AS guest_name, r.room_number
+      SELECT c.*, g.full_name AS guest_name, g.email AS guest_email, g.mobile_number AS guest_phone, r.room_number, r.room_type
       FROM complaints c
       LEFT JOIN guests g ON c.guest_id = g.guest_id
       LEFT JOIN rooms r ON COALESCE(c.room_id, (
@@ -322,71 +410,106 @@ export const dbOps = {
   updateBookingStatus: (bookingId: number, status: Booking['booking_status']) => {
     const sql = `UPDATE bookings SET booking_status = '${status}' WHERE booking_id = ${bookingId};`;
     return executeQueryAsync(sql, ['bookings', 'guest_accounts', 'rooms', 'housekeeping', 'room_availability', 'active_stays', 'stay_history'], async () => {
-      await query('START TRANSACTION');
+      const conn = await getPool().getConnection();
       try {
-        await execute('UPDATE bookings SET booking_status = ? WHERE booking_id = ?', [status, bookingId]);
-        const bookings = await query('SELECT * FROM bookings WHERE booking_id = ?', [bookingId]);
-        if (bookings.length === 0) throw new Error("Booking record not encountered.");
-        const found = bookings[0];
+        await conn.beginTransaction();
 
-        const guests = await query('SELECT * FROM guests WHERE guest_id = ?', [found.guest_id]);
-        if (guests.length > 0) {
-          const guest = guests[0];
-          const guestAccounts = await query('SELECT * FROM guest_accounts WHERE LOWER(email) = LOWER(?)', [guest.email]);
-          if (guestAccounts.length > 0) {
-            const guestAccount = guestAccounts[0];
-            if (status === 'Checked-In') {
-              await execute('UPDATE guest_accounts SET is_activated = 1 WHERE account_id = ?', [guestAccount.account_id]);
-            } else if (status === 'Checked-Out') {
-              const otherStays = await query(
-                'SELECT * FROM bookings WHERE guest_id = ? AND booking_status = "Checked-In" AND booking_id != ?',
-                [found.guest_id, bookingId]
-              );
-              if (otherStays.length === 0) {
-                await execute('UPDATE guest_accounts SET is_activated = 0 WHERE account_id = ?', [guestAccount.account_id]);
-              }
-            }
+        // 1. Fetch booking, guest, guest account, and room metadata in a single JOIN query at start
+        const [metaRows] = await conn.query(`
+          SELECT 
+            b.booking_id, b.guest_id, b.room_id, b.check_in_date, b.check_out_date, b.booking_status,
+            g.email AS guest_email,
+            ga.account_id AS guest_account_id,
+            r.room_number, r.room_status
+          FROM bookings b
+          LEFT JOIN guests g ON b.guest_id = g.guest_id
+          LEFT JOIN guest_accounts ga ON LOWER(g.email) = LOWER(ga.email)
+          LEFT JOIN rooms r ON b.room_id = r.room_id
+          WHERE b.booking_id = ?
+        `, [bookingId]);
+
+        const meta = (metaRows as any[])[0];
+        if (!meta) throw new Error("Booking record not encountered.");
+
+        const guestAccountId = meta.guest_account_id;
+        const roomId = meta.room_id;
+        const guestId = meta.guest_id;
+        const checkInDate = formatDate(meta.check_in_date);
+        const checkOutDate = formatDate(meta.check_out_date);
+
+        const ops: Promise<any>[] = [];
+
+        // Always update booking status
+        ops.push(conn.execute('UPDATE bookings SET booking_status = ? WHERE booking_id = ?', [status, bookingId]));
+
+        if (status === 'Checked-In') {
+          if (guestAccountId) {
+            ops.push(conn.execute('UPDATE guest_accounts SET is_activated = 1 WHERE account_id = ?', [guestAccountId]));
           }
-        }
-
-        const rooms = await query('SELECT * FROM rooms WHERE room_id = ?', [found.room_id]);
-        if (rooms.length > 0) {
-          const room = rooms[0];
-          if (status === 'Checked-In') {
-            await execute('UPDATE rooms SET room_status = "Occupied" WHERE room_id = ?', [room.room_id]);
-            await execute(
+          if (roomId) {
+            ops.push(conn.execute('UPDATE rooms SET room_status = "Occupied" WHERE room_id = ?', [roomId]));
+            ops.push(conn.execute(
               'INSERT INTO active_stays (booking_id, guest_id, room_id, expected_check_out, status) VALUES (?, ?, ?, ?, "Checked-In") ON DUPLICATE KEY UPDATE status = "Checked-In"',
-              [bookingId, found.guest_id, found.room_id, found.check_out_date]
-            );
-          } else if (status === 'Checked-Out') {
-            await execute('UPDATE rooms SET room_status = "Dirty" WHERE room_id = ?', [room.room_id]);
-            await execute('INSERT INTO housekeeping (room_id, assigned_staff, task_status) VALUES (?, "Karan Singh", "Pending")', [room.room_id]);
-            await execute('DELETE FROM active_stays WHERE booking_id = ?', [bookingId]);
-            const payments = await query('SELECT amount FROM payments WHERE booking_id = ?', [bookingId]);
-            const totalAmount = payments.length > 0 ? payments[0].amount : 0.00;
-            await execute(
-              'INSERT INTO stay_history (booking_id, guest_id, room_id, check_in_date, check_out_date, status, total_amount) VALUES (?, ?, ?, ?, ?, "Checked-Out", ?) ON DUPLICATE KEY UPDATE status = "Checked-Out", total_amount = ?',
-              [bookingId, found.guest_id, found.room_id, found.check_in_date, found.check_out_date, totalAmount, totalAmount]
-            );
-          } else if (status === 'Cancelled') {
-            const startDay = new Date(found.check_in_date);
-            const endDay = new Date(found.check_out_date);
+              [bookingId, guestId, roomId, checkOutDate]
+            ));
+          }
+        } else if (status === 'Checked-Out') {
+          if (guestAccountId) {
+            // Update guest account status conditionally if no other checked-in bookings exist for this guest
+            ops.push(conn.execute(`
+              UPDATE guest_accounts 
+              SET is_activated = 0 
+              WHERE account_id = ? 
+                AND (SELECT COUNT(*) FROM bookings WHERE guest_id = ? AND booking_status = 'Checked-In' AND booking_id != ?) = 0
+            `, [guestAccountId, guestId, bookingId]));
+          }
+          if (roomId) {
+            ops.push(conn.execute('UPDATE rooms SET room_status = "Dirty" WHERE room_id = ?', [roomId]));
+            ops.push(conn.execute('INSERT INTO housekeeping (room_id, assigned_staff, task_status) VALUES (?, "Karan Singh", "Pending")', [roomId]));
+            ops.push(conn.execute('DELETE FROM active_stays WHERE booking_id = ?', [bookingId]));
+            ops.push(conn.execute(`
+              INSERT INTO stay_history (booking_id, guest_id, room_id, check_in_date, check_out_date, status, total_amount) 
+              VALUES (?, ?, ?, ?, ?, "Checked-Out", COALESCE((SELECT SUM(amount) FROM payments WHERE booking_id = ?), 0.00)) 
+              ON DUPLICATE KEY UPDATE status = "Checked-Out", total_amount = COALESCE((SELECT SUM(amount) FROM payments WHERE booking_id = ?), 0.00)
+            `, [bookingId, guestId, roomId, checkInDate, checkOutDate, bookingId, bookingId]));
+          }
+        } else if (status === 'Cancelled') {
+          if (roomId) {
+            const startDay = new Date(checkInDate);
+            const endDay = new Date(checkOutDate);
             let current = new Date(startDay);
             while (current < endDay) {
               const dStr = current.toISOString().split('T')[0];
-              await execute('UPDATE room_availability SET availability_status = "Available" WHERE room_id = ? AND available_date = ?', [found.room_id, dStr]);
+              ops.push(conn.execute('UPDATE room_availability SET availability_status = "Available" WHERE room_id = ? AND available_date = ?', [roomId, dStr]));
               current.setDate(current.getDate() + 1);
             }
-            await execute('DELETE FROM active_stays WHERE booking_id = ?', [bookingId]);
-            await execute(
-              'INSERT INTO stay_history (booking_id, guest_id, room_id, check_in_date, check_out_date, status, total_amount) VALUES (?, ?, ?, ?, ?, "Cancelled", 0.00) ON DUPLICATE KEY UPDATE status = "Cancelled", total_amount = 0.00',
-              [bookingId, found.guest_id, found.room_id, found.check_in_date, found.check_out_date]
-            );
+            ops.push(conn.execute('DELETE FROM active_stays WHERE booking_id = ?', [bookingId]));
+            ops.push(conn.execute(`
+              INSERT INTO stay_history (booking_id, guest_id, room_id, check_in_date, check_out_date, status, total_amount) 
+              VALUES (?, ?, ?, ?, ?, "Cancelled", 0.00) 
+              ON DUPLICATE KEY UPDATE status = "Cancelled", total_amount = 0.00
+            `, [bookingId, guestId, roomId, checkInDate, checkOutDate]));
           }
         }
 
-        await query('COMMIT');
-        const [booking] = await query('SELECT * FROM bookings WHERE booking_id = ?', [bookingId]);
+        // Execute all updates in a single parallel batch inside connection transaction
+        await Promise.all(ops);
+
+        await conn.commit();
+
+        // 3. Fetch final joined booking details in one query using the connection
+        const [finalRows] = await conn.query(`
+          SELECT b.*, g.full_name AS guest_name, g.email AS guest_email, g.mobile_number AS guest_phone,
+                 r.room_number, r.room_type, r.price_per_night
+          FROM bookings b
+          LEFT JOIN guests g ON b.guest_id = g.guest_id
+          LEFT JOIN rooms r ON b.room_id = r.room_id
+          WHERE b.booking_id = ?
+        `, [bookingId]);
+
+        const booking = (finalRows as any[])[0];
+        if (!booking) throw new Error("Booking record not encountered after update.");
+
         return { 
           ...booking, 
           check_in_date: formatDate(booking.check_in_date),
@@ -394,8 +517,10 @@ export const dbOps = {
           is_archived: !!booking.is_archived 
         };
       } catch (err) {
-        await query('ROLLBACK');
+        await conn.rollback();
         throw err;
+      } finally {
+        conn.release();
       }
     });
   },
@@ -409,27 +534,37 @@ export const dbOps = {
     });
   },
 
-  updateHousekeepingTask: (taskId: number, status: HousekeepingTask['task_status']) => {
+  updateHousekeepingTask: (taskId: number, status: HousekeepingTask['task_status'], assignedStaff?: string) => {
     const sql = `UPDATE housekeeping SET task_status = '${status}' WHERE task_id = ${taskId};`;
     return executeQueryAsync(sql, ['housekeeping', 'rooms', 'active_stays', 'room_availability'], async () => {
-      await query('START TRANSACTION');
+      const conn = await getPool().getConnection();
       try {
+        await conn.beginTransaction();
         const completionTime = status === 'Completed' ? new Date() : null;
-        await execute('UPDATE housekeeping SET task_status = ?, completion_time = ? WHERE task_id = ?', [status, completionTime, taskId]);
-        const tasks = await query('SELECT * FROM housekeeping WHERE task_id = ?', [taskId]);
-        if (tasks.length === 0) throw new Error("Housekeeping task not found.");
-        const found = tasks[0];
+        if (assignedStaff) {
+          await conn.execute('UPDATE housekeeping SET task_status = ?, completion_time = ?, assigned_staff = ? WHERE task_id = ?', [status, completionTime, assignedStaff, taskId]);
+        } else {
+          await conn.execute('UPDATE housekeeping SET task_status = ?, completion_time = ? WHERE task_id = ?', [status, completionTime, taskId]);
+        }
+        const [tasks] = await conn.query('SELECT * FROM housekeeping WHERE task_id = ?', [taskId]);
+        if ((tasks as any[]).length === 0) throw new Error("Housekeeping task not found.");
+        const found = (tasks as any[])[0];
 
         if (status === 'Completed') {
-          await execute('UPDATE rooms SET room_status = "Available" WHERE room_id = ?', [found.room_id]);
-          await execute('DELETE FROM active_stays WHERE room_id = ?', [found.room_id]);
+          await conn.execute('UPDATE rooms SET room_status = "Available" WHERE room_id = ?', [found.room_id]);
+          await conn.execute(`
+            DELETE FROM active_stays 
+            WHERE room_id = ? 
+              AND booking_id NOT IN (SELECT booking_id FROM bookings WHERE booking_status = 'Checked-In')
+          `, [found.room_id]);
           
           const todayStr = new Date().toISOString().split('T')[0];
-          const bookingsToClear = await query(
+          const [bookingsToClear] = await conn.query(
             'SELECT * FROM bookings WHERE room_id = ? AND booking_status IN ("Checked-Out", "Checked-In") AND check_out_date >= ?',
             [found.room_id, todayStr]
           );
-          for (const booking of bookingsToClear) {
+          const ops: Promise<any>[] = [];
+          for (const booking of (bookingsToClear as any[])) {
             const start = new Date(booking.check_in_date) > new Date() ? booking.check_in_date : todayStr;
             const end = booking.check_out_date;
             
@@ -437,19 +572,22 @@ export const dbOps = {
             const endDay = new Date(end);
             while (current < endDay) {
               const dStr = current.toISOString().split('T')[0];
-              await execute(
+              ops.push(conn.execute(
                 'UPDATE room_availability SET availability_status = "Available" WHERE room_id = ? AND available_date = ?',
                 [found.room_id, dStr]
-              );
+              ));
               current.setDate(current.getDate() + 1);
             }
           }
+          await Promise.all(ops);
         }
-        await query('COMMIT');
+        await conn.commit();
         return found;
       } catch (err) {
-        await query('ROLLBACK');
+        await conn.rollback();
         throw err;
+      } finally {
+        conn.release();
       }
     });
   },
@@ -488,12 +626,26 @@ export const dbOps = {
     });
   },
 
-  updateComplaintStatus: (complaintId: number, status: Complaint['complaint_status']) => {
+  updateComplaintStatus: (complaintId: number, status: Complaint['complaint_status'], assignedStaff?: string) => {
     const sql = `UPDATE complaints SET complaint_status = '${status}' WHERE complaint_id = ${complaintId};`;
     return executeQueryAsync(sql, ['complaints'], async () => {
-      await execute('UPDATE complaints SET complaint_status = ? WHERE complaint_id = ?', [status, complaintId]);
-      const [c] = await query('SELECT * FROM complaints WHERE complaint_id = ?', [complaintId]);
-      return c;
+      const conn = await getPool().getConnection();
+      try {
+        await conn.beginTransaction();
+        if (assignedStaff) {
+          await conn.execute('UPDATE complaints SET complaint_status = ?, assigned_staff = ? WHERE complaint_id = ?', [status, assignedStaff, complaintId]);
+        } else {
+          await conn.execute('UPDATE complaints SET complaint_status = ? WHERE complaint_id = ?', [status, complaintId]);
+        }
+        const [rows] = await conn.query('SELECT * FROM complaints WHERE complaint_id = ?', [complaintId]);
+        await conn.commit();
+        return (rows as any[])[0] || null;
+      } catch (err) {
+        await conn.rollback();
+        throw err;
+      } finally {
+        conn.release();
+      }
     });
   },
 
@@ -580,7 +732,7 @@ export const dbOps = {
 
   getRoomServiceRequests: () => {
     const sql = `
-      SELECT r.*, g.full_name AS guest_name, rm.room_number
+      SELECT r.*, g.full_name AS guest_name, g.email AS guest_email, g.mobile_number AS guest_phone, rm.room_number, rm.room_type
       FROM room_service_requests r
       LEFT JOIN guests g ON r.guest_id = g.guest_id
       LEFT JOIN rooms rm ON r.room_id = rm.room_id;
@@ -590,12 +742,26 @@ export const dbOps = {
     });
   },
 
-  updateRoomServiceStatus: (requestId: number, status: RoomServiceRequest['request_status']) => {
+  updateRoomServiceStatus: (requestId: number, status: RoomServiceRequest['request_status'], assignedStaff?: string) => {
     const sql = `UPDATE room_service_requests SET request_status = '${status}' WHERE request_id = ${requestId};`;
     return executeQueryAsync(sql, ['room_service_requests'], async () => {
-      await execute('UPDATE room_service_requests SET request_status = ? WHERE request_id = ?', [status, requestId]);
-      const [r] = await query('SELECT * FROM room_service_requests WHERE request_id = ?', [requestId]);
-      return r;
+      const conn = await getPool().getConnection();
+      try {
+        await conn.beginTransaction();
+        if (assignedStaff) {
+          await conn.execute('UPDATE room_service_requests SET request_status = ?, assigned_staff = ? WHERE request_id = ?', [status, assignedStaff, requestId]);
+        } else {
+          await conn.execute('UPDATE room_service_requests SET request_status = ? WHERE request_id = ?', [status, requestId]);
+        }
+        const [rows] = await conn.query('SELECT * FROM room_service_requests WHERE request_id = ?', [requestId]);
+        await conn.commit();
+        return (rows as any[])[0] || null;
+      } catch (err) {
+        await conn.rollback();
+        throw err;
+      } finally {
+        conn.release();
+      }
     });
   },
 
@@ -624,6 +790,34 @@ export const dbOps = {
         check_in_date: r.check_in_date || 'N/A',
         check_out_date: r.check_out_date || 'N/A'
       }));
+    });
+  },
+
+  getGuestAccountById: (accountId: number) => {
+    const sql = `SELECT * FROM guest_accounts WHERE account_id = ${accountId};`;
+    return executeQueryAsync(sql, ['guest_accounts'], async () => {
+      const rows = await query('SELECT * FROM guest_accounts WHERE account_id = ?', [accountId]);
+      return rows[0] || null;
+    });
+  },
+
+  getGuestAccountByEmail: (email: string) => {
+    const sql = `SELECT * FROM guest_accounts WHERE LOWER(email) = LOWER('${email}');`;
+    return executeQueryAsync(sql, ['guest_accounts'], async () => {
+      const rows = await query('SELECT * FROM guest_accounts WHERE LOWER(email) = LOWER(?)', [email]);
+      return rows[0] || null;
+    });
+  },
+
+  getGuestAccountByIdOrGuestIdStr: (accountId: number | null, guestIdStr: string | null) => {
+    const sql = `SELECT * FROM guest_accounts WHERE account_id = ${accountId || 0} OR guest_id_str = '${guestIdStr || ''}';`;
+    return executeQueryAsync(sql, ['guest_accounts'], async () => {
+      const rows = await query(`
+        SELECT * FROM guest_accounts 
+        WHERE (? IS NOT NULL AND account_id = ?) 
+           OR (? IS NOT NULL AND guest_id_str = ?)
+      `, [accountId, accountId, guestIdStr, guestIdStr]);
+      return rows[0] || null;
     });
   },
 
@@ -676,9 +870,10 @@ export const dbOps = {
 
           const guest_id_str = `SNP2026${String(nextNum).padStart(3, '0')}`;
           const username     = `guest_snp${String(nextNum).padStart(3, '0')}`;
-          const password_hash = `Temp@${Math.floor(100 + Math.random() * 900)}`;
+          const raw_password = `Temp@${Math.floor(100 + Math.random() * 900)}`;
+          const password_hash = crypto.createHash('sha256').update(raw_password).digest('hex');
 
-          console.log('[Diagnostics DB] ✅ INSERTING — guest_id_str:', guest_id_str, '| username:', username, '| password_hash:', password_hash);
+          console.log('[Diagnostics DB] ✅ INSERTING — guest_id_str:', guest_id_str, '| username:', username, '| password_hash (SHA-256):', password_hash);
 
           const [insertResult] = await conn.execute(
             'INSERT INTO guest_accounts (guest_id_str, username, password_hash, full_name, mobile_number, email, stay_duration, is_activated, first_login_password_changed) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0)',
@@ -702,6 +897,7 @@ export const dbOps = {
           const acc = (accRows as any[])[0];
           return {
             ...acc,
+            password_hash: raw_password, // Return raw password in password_hash field for UI/dispatch
             is_activated: !!acc.is_activated,
             first_login_password_changed: !!acc.first_login_password_changed
           };
@@ -721,18 +917,132 @@ export const dbOps = {
     });
   },
 
-  updateGuestAccountPassword: (usernameOrGuestId: string, newPass: string) => {
-    const sql = `UPDATE guest_accounts SET password_hash = '${newPass}', first_login_password_changed = 1 WHERE username = '${usernameOrGuestId}' OR guest_id_str = '${usernameOrGuestId}';`;
+  registerGuestAccount: (data: {
+    full_name: string;
+    mobile_number: string;
+    email: string;
+    password_hash: string;
+    gender?: string;
+    city?: string;
+    preferred_room_type?: string;
+  }) => {
+    const sql = `INSERT INTO guest_accounts (self_register) ...`;
+    console.log('[Diagnostics DB] registerGuestAccount data received:', data.email);
+    return executeQueryAsync(sql, ['guest_accounts', 'guests'], async () => {
+      const conn = await getPool().getConnection();
+      const lockName = 'snp_guest_account_id_lock';
+      try {
+        const [lockResult] = await conn.query(
+          'SELECT GET_LOCK(?, 10) AS locked', [lockName]
+        );
+        const locked = (lockResult as any[])[0]?.locked;
+        if (!locked) {
+          throw new Error('Could not acquire advisory lock for guest ID generation. Please try again.');
+        }
+
+        await conn.query('START TRANSACTION');
+        try {
+          const [maxRows] = await conn.query(`
+            SELECT MAX(
+              CAST(SUBSTRING(guest_id_str, 8) AS UNSIGNED)
+            ) AS max_suffix
+            FROM guest_accounts
+            WHERE guest_id_str LIKE 'SNP2026%'
+          `);
+          const maxSuffix = (maxRows as any[])[0]?.max_suffix;
+          const nextNum = (maxSuffix !== null && maxSuffix !== undefined)
+            ? Number(maxSuffix) + 1
+            : 1;
+
+          const guest_id_str = `SNP2026${String(nextNum).padStart(3, '0')}`;
+          const username     = `guest_snp${String(nextNum).padStart(3, '0')}`;
+
+          // Check if guest with same email exists in guests table
+          const [existingGuests] = await conn.query(
+            'SELECT guest_id FROM guests WHERE LOWER(email) = LOWER(?) LIMIT 1',
+            [data.email]
+          );
+
+          let guestId: number;
+          if ((existingGuests as any[]).length > 0) {
+            guestId = (existingGuests as any[])[0].guest_id;
+            await conn.execute(
+              'UPDATE guests SET full_name = ?, mobile_number = ?, gender = ?, city = ?, preferred_room_type = ? WHERE guest_id = ?',
+              [data.full_name, data.mobile_number, data.gender || null, data.city || null, data.preferred_room_type || null, guestId]
+            );
+          } else {
+            const [insertGuest] = await conn.execute(
+              'INSERT INTO guests (full_name, email, mobile_number, address, government_id, gender, city, preferred_room_type) VALUES (?, ?, ?, "Refer to Guest Access Preference in Relational Index", ?, ?, ?, ?)',
+              [
+                data.full_name,
+                data.email,
+                data.mobile_number,
+                `Verified Guest Account (${guest_id_str})`,
+                data.gender || null,
+                data.city || null,
+                data.preferred_room_type || null
+              ]
+            );
+            guestId = (insertGuest as any).insertId;
+          }
+
+          const [insertResult] = await conn.execute(
+            'INSERT INTO guest_accounts (guest_id_str, username, password_hash, full_name, mobile_number, email, stay_duration, is_activated, first_login_password_changed, gender, city, preferred_room_type) VALUES (?, ?, ?, ?, ?, ?, "N/A", 1, 1, ?, ?, ?)',
+            [
+              guest_id_str,
+              username,
+              data.password_hash,
+              data.full_name,
+              data.mobile_number,
+              data.email,
+              data.gender || null,
+              data.city || null,
+              data.preferred_room_type || null
+            ]
+          );
+          const accountId = (insertResult as any).insertId;
+
+          await conn.query('COMMIT');
+
+          const [accRows] = await conn.query(
+            'SELECT * FROM guest_accounts WHERE account_id = ?', [accountId]
+          );
+          const acc = (accRows as any[])[0];
+          return {
+            ...acc,
+            is_activated: !!acc.is_activated,
+            first_login_password_changed: !!acc.first_login_password_changed
+          };
+        } catch (err) {
+          await conn.query('ROLLBACK');
+          throw err;
+        }
+      } finally {
+        try {
+          await conn.query('SELECT RELEASE_LOCK(?)', [lockName]);
+        } catch (_) {}
+        conn.release();
+      }
+    });
+  },
+
+  updateGuestAccountPassword: (usernameOrGuestId: string, newPass: string, firstLoginPasswordChanged: number = 1) => {
+    let passHash = newPass;
+    if (!/^[a-f0-9]{64}$/i.test(newPass)) {
+      passHash = crypto.createHash('sha256').update(newPass).digest('hex');
+    }
+    const sql = `UPDATE guest_accounts SET password_hash = '${passHash}', first_login_password_changed = ${firstLoginPasswordChanged} WHERE username = '${usernameOrGuestId}' OR guest_id_str = '${usernameOrGuestId}';`;
     return executeQueryAsync(sql, ['guest_accounts'], async () => {
       await execute(
-        'UPDATE guest_accounts SET password_hash = ?, first_login_password_changed = 1 WHERE username = ? OR guest_id_str = ?',
-        [newPass, usernameOrGuestId, usernameOrGuestId]
+        'UPDATE guest_accounts SET password_hash = ?, first_login_password_changed = ? WHERE username = ? OR guest_id_str = ?',
+        [passHash, firstLoginPasswordChanged, usernameOrGuestId, usernameOrGuestId]
       );
       const accounts = await query('SELECT * FROM guest_accounts WHERE username = ? OR guest_id_str = ?', [usernameOrGuestId, usernameOrGuestId]);
       if (accounts.length === 0) throw new Error("Credentials reference not encountered in secure Relational index.");
       const acc = accounts[0];
       return {
         ...acc,
+        password_hash: newPass, // Return original input password in returned object for UI/dispatch purposes
         is_activated: !!acc.is_activated,
         first_login_password_changed: !!acc.first_login_password_changed
       };
@@ -919,7 +1229,11 @@ export const dbOps = {
         );
 
         // 4. Reset occupancy-related locks
-        await execute('DELETE FROM active_stays WHERE room_id = ?', [roomId]);
+        await execute(`
+          DELETE FROM active_stays 
+          WHERE room_id = ? 
+            AND booking_id NOT IN (SELECT booking_id FROM bookings WHERE booking_status = 'Checked-In')
+        `, [roomId]);
 
         // 5. Update room availability records for checked-out bookings
         const todayStr = new Date().toISOString().split('T')[0];
@@ -1015,6 +1329,14 @@ export const dbOps = {
       console.log('Monthly Revenue Data:\n', logData);
 
       return trends;
+    });
+  },
+
+  deleteBooking: (bookingId: number) => {
+    const sql = `DELETE FROM bookings WHERE booking_id = ${bookingId} AND booking_status = 'Checked-Out';`;
+    return executeQueryAsync(sql, ['bookings'], async () => {
+      const result = await execute('DELETE FROM bookings WHERE booking_id = ? AND booking_status = "Checked-Out"', [bookingId]);
+      return result.affectedRows > 0;
     });
   }
 };

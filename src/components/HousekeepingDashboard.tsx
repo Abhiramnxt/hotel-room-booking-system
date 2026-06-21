@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  CheckCircle2, RefreshCw, AlertTriangle, UserCheck, ShieldAlert, 
+import {
+  CheckCircle2, RefreshCw, AlertTriangle, UserCheck, ShieldAlert,
   Utensils, Coffee, Wrench, ClipboardList, AlertOctagon, ListFilter,
   Search, Clock, ChevronRight, User, Home, Sparkles,
   PlayCircle, UserPlus, Eye, ShieldCheck
@@ -19,6 +19,10 @@ interface UnifiedRequest {
   priority: 'Low' | 'Medium' | 'High' | 'Critical';
   status: 'Pending' | 'In Progress' | 'Completed';
   category: 'housekeeping' | 'room_service' | 'complaint';
+  assignedStaff?: string;
+  roomType: string;
+  guestEmail?: string;
+  guestPhone?: string;
 }
 
 export function HousekeepingDashboard() {
@@ -26,6 +30,30 @@ export function HousekeepingDashboard() {
   const [isLoading, setIsLoading] = useState(false);
   const [activeFilter, setActiveFilter] = useState<'All' | 'Food Orders' | 'Room Service Requests' | 'Issue Reports' | 'Maintenance Requests' | 'Guest Complaints' | 'Housekeeping Requests' | 'Completed' | 'Pending'>('All');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Optimistic UI & staff list tracking states
+  const [processingIds, setProcessingIds] = useState<Record<string, string>>({});
+  const [staffList, setStaffList] = useState<string[]>(['Vamsi', 'Harsha', 'Shashank', 'Anil']);
+  const [localToast, setLocalToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const showLocalToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setLocalToast({ message, type });
+    const timer = setTimeout(() => setLocalToast(null), 3500);
+    return () => clearTimeout(timer);
+  };
+
+  const fetchStaff = async () => {
+    try {
+      const res = await fetch('/api/staff');
+      if (res.ok) {
+        const data = await res.json();
+        const names = data.staff.map((s: any) => s.staff_name);
+        if (names.length > 0) setStaffList(names);
+      }
+    } catch (e) {
+      console.warn("Could not query staff members roster:", e);
+    }
+  };
 
   const fetchAllRequests = async () => {
     setIsLoading(true);
@@ -68,7 +96,11 @@ export function HousekeepingDashboard() {
           dateTime: task.created_at || new Date().toISOString(),
           priority: 'Medium',
           status: task.task_status,
-          category: 'housekeeping'
+          category: 'housekeeping',
+          assignedStaff: task.assigned_staff || '',
+          roomType: task.room_type || 'Standard',
+          guestEmail: latestBooking ? latestBooking.guest_email || '' : '',
+          guestPhone: latestBooking ? latestBooking.guest_phone || '' : ''
         });
       });
 
@@ -85,7 +117,11 @@ export function HousekeepingDashboard() {
           dateTime: req.created_at || new Date().toISOString(),
           priority: 'High',
           status: req.request_status === 'Delivered' || req.request_status === 'Cancelled' ? 'Completed' : req.request_status,
-          category: 'room_service'
+          category: 'room_service',
+          assignedStaff: req.assigned_staff || '',
+          roomType: (req as any).room_type || 'Standard',
+          guestEmail: (req as any).guest_email || '',
+          guestPhone: (req as any).guest_phone || ''
         });
       });
 
@@ -102,7 +138,11 @@ export function HousekeepingDashboard() {
           dateTime: cp.created_at || new Date().toISOString(),
           priority: cp.priority_level || 'Medium',
           status: cp.complaint_status === 'Resolved' ? 'Completed' : cp.complaint_status,
-          category: 'complaint'
+          category: 'complaint',
+          assignedStaff: cp.assigned_staff || '',
+          roomType: (cp as any).room_type || 'Standard',
+          guestEmail: (cp as any).guest_email || '',
+          guestPhone: (cp as any).guest_phone || ''
         });
       });
 
@@ -118,17 +158,13 @@ export function HousekeepingDashboard() {
 
   useEffect(() => {
     fetchAllRequests();
+    fetchStaff();
   }, []);
 
   /**
    * Broadcasts a service status change signal so that GuestDashboard
    * (which may be mounted in the same tab or another tab) can immediately
    * refresh its room-service and complaint data.
-   *
-   * Two mechanisms are used:
-   *   1. localStorage write → fires the 'storage' event in OTHER tabs.
-   *   2. Custom DOM event  → fires in the SAME tab (localStorage does NOT
-   *      trigger 'storage' in the tab that wrote the value).
    */
   const broadcastServiceStatusChange = () => {
     try {
@@ -141,6 +177,11 @@ export function HousekeepingDashboard() {
 
   const handleUpdateStatus = async (item: UnifiedRequest, nextStatus: 'In Progress' | 'Completed') => {
     playSound('click');
+    if (processingIds[item.id]) return;
+
+    // Backup state for optimistic rollback
+    const backup = [...unifiedRequests];
+
     let url = '';
     let statusValue = '';
 
@@ -155,20 +196,91 @@ export function HousekeepingDashboard() {
       statusValue = nextStatus === 'Completed' ? 'Resolved' : 'In Progress';
     }
 
+    // Set processing indicator
+    setProcessingIds(prev => ({ ...prev, [item.id]: 'updating' }));
+
+    // Optimistically update locally
+    setUnifiedRequests(prev => prev.map(r => r.id === item.id ? { ...r, status: nextStatus } : r));
+
     try {
       const res = await fetch(url, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: statusValue })
+        body: JSON.stringify({ status: statusValue, assigned_staff: item.assignedStaff })
       });
       if (res.ok) {
         playSound('success');
-        fetchAllRequests();
-        // Immediately notify GuestDashboard of the room-service/complaint status change
+        showLocalToast('✅ Successfully Updated');
+        // Notify other components
         broadcastServiceStatusChange();
+      } else {
+        setUnifiedRequests(backup);
+        showLocalToast('❌ Operation Failed', 'error');
       }
     } catch (e) {
       console.error("Failed to update status:", e);
+      setUnifiedRequests(backup);
+      showLocalToast('❌ Operation Failed', 'error');
+    } finally {
+      setProcessingIds(prev => {
+        const next = { ...prev };
+        delete next[item.id];
+        return next;
+      });
+    }
+  };
+
+  const handleAssignStaff = async (item: UnifiedRequest, staffName: string) => {
+    playSound('click');
+    if (processingIds[item.id]) return;
+
+    // Backup state for optimistic rollback
+    const backup = [...unifiedRequests];
+
+    // Optimistically assign staff and transition status from Pending to In Progress
+    const nextStatus = item.status === 'Pending' ? 'In Progress' : item.status;
+    let url = '';
+    let statusValue = '';
+
+    if (item.category === 'housekeeping') {
+      url = `/api/housekeeping/${item.originalId}/status`;
+      statusValue = nextStatus;
+    } else if (item.category === 'room_service') {
+      url = `/api/room-service/${item.originalId}/status`;
+      statusValue = nextStatus === 'Completed' ? 'Delivered' : 'In Progress';
+    } else if (item.category === 'complaint') {
+      url = `/api/complaints/${item.originalId}/status`;
+      statusValue = nextStatus === 'Completed' ? 'Resolved' : 'In Progress';
+    }
+
+    setProcessingIds(prev => ({ ...prev, [item.id]: 'assigning' }));
+
+    setUnifiedRequests(prev => prev.map(r => r.id === item.id ? { ...r, assignedStaff: staffName, status: nextStatus } : r));
+
+    try {
+      const res = await fetch(url, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: statusValue, assigned_staff: staffName })
+      });
+      if (res.ok) {
+        playSound('success');
+        showLocalToast('✅ Successfully Assigned');
+        broadcastServiceStatusChange();
+      } else {
+        setUnifiedRequests(backup);
+        showLocalToast('❌ Operation Failed', 'error');
+      }
+    } catch (e) {
+      console.error("Failed to assign staff:", e);
+      setUnifiedRequests(backup);
+      showLocalToast('❌ Operation Failed', 'error');
+    } finally {
+      setProcessingIds(prev => {
+        const next = { ...prev };
+        delete next[item.id];
+        return next;
+      });
     }
   };
 
@@ -176,8 +288,8 @@ export function HousekeepingDashboard() {
   const filteredRequests = React.useMemo(() => {
     return unifiedRequests.filter(req => {
       // Search filter
-      const matchesSearch = searchQuery.trim() === '' || 
-        req.roomNumber.toLowerCase().includes(searchQuery.toLowerCase()) || 
+      const matchesSearch = searchQuery.trim() === '' ||
+        req.roomNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
         req.guestName.toLowerCase().includes(searchQuery.toLowerCase()) ||
         req.id.toLowerCase().includes(searchQuery.toLowerCase());
 
@@ -284,18 +396,44 @@ export function HousekeepingDashboard() {
     }
   };
 
+  const renderStaffSelector = (req: UnifiedRequest) => {
+    const isProcessing = !!processingIds[req.id];
+    return (
+      <div className="relative inline-block text-left animate-fade-in-up" onClick={(e) => e.stopPropagation()}>
+        <select
+          value={req.assignedStaff || ""}
+          onChange={(e) => handleAssignStaff(req, e.target.value)}
+          disabled={isProcessing}
+          style={{ color: '#000000', backgroundColor: '#f1f5f9' }}
+          className="text-[10px] font-bold border border-slate-300 dark:border-slate-600 dark:bg-sky-950/30 dark:text-sky-400 rounded-lg p-1.5 focus:outline-none hover:bg-slate-200 dark:hover:bg-sky-950/50 transition-all cursor-pointer disabled:opacity-50 min-w-[110px]"
+        >
+          <option value="" disabled style={{ color: '#000000' }}>Assign Staff</option>
+          {req.assignedStaff && !staffList.includes(req.assignedStaff) && (
+            <option value={req.assignedStaff} style={{ color: '#000000' }}>{req.assignedStaff}</option>
+          )}
+          {staffList.map(name => (
+            <option key={name} value={name} style={{ color: '#000000' }}>{name}</option>
+          ))}
+        </select>
+      </div>
+    );
+  };
+
   /**
    * renderActionButtons — returns the correct set of operational buttons
    * for each request type, based on the current status.
-   *
-   * Food Orders         → Start Processing | Mark Completed
-   * Room Service        → Assign           | In Progress    | Mark Completed
-   * Issue Reports       → Review           | Resolve        | Mark Completed
-   * Maintenance Request → Assign Staff     | In Progress    | Mark Completed
-   * Housekeeping Clean  → Assign Staff     | In Progress    | Mark Completed
-   * Guest Complaints    → Investigate      | Resolve        | Mark Completed
    */
   const renderActionButtons = (req: UnifiedRequest, compact = false) => {
+    if (processingIds[req.id]) {
+      const procText = processingIds[req.id] === 'assigning' ? '⏳ Assigning...' : '🔄 Updating...';
+      return (
+        <span className="text-[10px] font-bold text-slate-500 bg-slate-100 dark:bg-slate-805 p-1 px-2.5 border border-slate-200 dark:border-slate-700 rounded-md flex items-center gap-1 animate-pulse">
+          <Clock className="h-3 w-3 animate-spin text-slate-400" />
+          <span>{procText}</span>
+        </span>
+      );
+    }
+
     const btnBase = compact
       ? 'font-bold px-2.5 py-1 rounded-lg text-[10px] uppercase transition-colors cursor-pointer flex items-center gap-1 whitespace-nowrap'
       : 'font-bold px-3 py-1.5 rounded-lg text-[10px] uppercase transition-colors cursor-pointer flex items-center gap-1 whitespace-nowrap';
@@ -307,10 +445,17 @@ export function HousekeepingDashboard() {
 
     if (req.status === 'Completed') {
       return (
-        <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50/50 p-1 px-2 border border-emerald-200 rounded-md flex items-center gap-1">
-          <CheckCircle2 className="h-3 w-3" />
-          <span>Done</span>
-        </span>
+        <div className="flex flex-col gap-1 items-start">
+          <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50/50 dark:bg-emerald-950/20 p-1 px-2 border border-emerald-200 dark:border-emerald-900 rounded-md flex items-center gap-1">
+            <CheckCircle2 className="h-3 w-3" />
+            <span>Done</span>
+          </span>
+          {req.assignedStaff && (
+            <span className="text-[10px] font-bold text-slate-700 dark:text-slate-350">
+              Staff: {req.assignedStaff}
+            </span>
+          )}
+        </div>
       );
     }
 
@@ -348,12 +493,15 @@ export function HousekeepingDashboard() {
         <div className="flex flex-wrap gap-1">
           {req.status === 'Pending' && (
             <button
-              onClick={() => handleUpdateStatus(req, 'In Progress')}
+              onClick={() => {
+                const defaultStaff = staffList.length > 0 ? staffList[0] : 'Rahul Sharma';
+                handleAssignStaff(req, defaultStaff);
+              }}
               className={pendingBtn}
               title="Assign staff to this room service request"
             >
               <UserPlus className="h-3 w-3" />
-              <span>Assign</span>
+              <span>Assign Staff</span>
             </button>
           )}
           {req.status === 'In Progress' && (
@@ -391,18 +539,18 @@ export function HousekeepingDashboard() {
               <button
                 onClick={() => handleUpdateStatus(req, 'Completed')}
                 className={resolveBtn}
-                title="Resolve and close this issue report"
+                title="Resolve this issue report"
               >
                 <ShieldCheck className="h-3 w-3" />
-                <span>Resolve</span>
+                <span>Resolve Request</span>
               </button>
               <button
                 onClick={() => handleUpdateStatus(req, 'Completed')}
                 className={completeBtn}
-                title="Mark issue as completed"
+                title="Close this issue report"
               >
                 <CheckCircle2 className="h-3 w-3" />
-                <span>Complete</span>
+                <span>Close Request</span>
               </button>
             </>
           )}
@@ -416,7 +564,10 @@ export function HousekeepingDashboard() {
         <div className="flex flex-wrap gap-1">
           {req.status === 'Pending' && (
             <button
-              onClick={() => handleUpdateStatus(req, 'In Progress')}
+              onClick={() => {
+                const defaultStaff = staffList.length > 0 ? staffList[0] : 'Karan Singh';
+                handleAssignStaff(req, defaultStaff);
+              }}
               className={pendingBtn}
               title="Assign maintenance staff"
             >
@@ -444,7 +595,10 @@ export function HousekeepingDashboard() {
         <div className="flex flex-wrap gap-1">
           {req.status === 'Pending' && (
             <button
-              onClick={() => handleUpdateStatus(req, 'In Progress')}
+              onClick={() => {
+                const defaultStaff = staffList.length > 0 ? staffList[0] : 'Karan Singh';
+                handleAssignStaff(req, defaultStaff);
+              }}
               className={pendingBtn}
               title="Assign housekeeping staff to this room"
             >
@@ -487,15 +641,15 @@ export function HousekeepingDashboard() {
               title="Resolve this complaint"
             >
               <ShieldCheck className="h-3 w-3" />
-              <span>Resolve</span>
+              <span>Resolve Request</span>
             </button>
             <button
               onClick={() => handleUpdateStatus(req, 'Completed')}
               className={completeBtn}
-              title="Mark complaint as completed"
+              title="Close this complaint"
             >
               <CheckCircle2 className="h-3 w-3" />
-              <span>Complete</span>
+              <span>Close Request</span>
             </button>
           </>
         )}
@@ -505,7 +659,7 @@ export function HousekeepingDashboard() {
 
   return (
     <div className="space-y-6" id="housekeeping_dashboard_unified">
-      
+
       {/* 1. TOP HEADER SUMMARY CARD */}
       <div className="bg-gradient-to-r from-[#003366] to-[#001f3f] text-white p-6 rounded-3xl border border-[#D4AF37]/30 shadow-lg" id="housekeeping_summary_banner">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
@@ -555,7 +709,7 @@ export function HousekeepingDashboard() {
 
       {/* 2. FILTERING AND SEARCH CONTROL PANEL */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-md flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
-        
+
         {/* Horizontal Filters buttons */}
         <div className="flex items-center gap-1.5 overflow-x-auto py-1 no-scrollbar select-none" id="housekeeping_filters_container">
           <div className="flex items-center gap-1 text-slate-400 mr-1.5">
@@ -568,11 +722,10 @@ export function HousekeepingDashboard() {
               <button
                 key={filter}
                 onClick={() => { playSound('tap'); setActiveFilter(filter as any); }}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap cursor-pointer border ${
-                  isActive 
-                    ? 'bg-[#003366] text-[#F9D976] border-[#D4AF37]' 
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap cursor-pointer border ${isActive
+                    ? 'bg-[#003366] text-[#F9D976] border-[#D4AF37]'
                     : 'bg-slate-50 text-slate-500 hover:text-slate-800 border-slate-200 hover:bg-slate-100'
-                }`}
+                  }`}
               >
                 {filter}
               </button>
@@ -593,7 +746,7 @@ export function HousekeepingDashboard() {
             className="w-full text-xs pl-9 pr-4 py-2.5 bg-slate-50 border rounded-xl focus:outline-none focus:border-[#003366] focus:bg-white transition-all"
           />
           {searchQuery && (
-            <button 
+            <button
               onClick={() => setSearchQuery('')}
               className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-650 text-xs"
             >
@@ -665,7 +818,7 @@ export function HousekeepingDashboard() {
                     });
 
                     return (
-                      <tr 
+                      <tr
                         key={req.id}
                         className="hover:bg-slate-50/70 border-b border-slate-100 transition-colors"
                       >
@@ -675,13 +828,16 @@ export function HousekeepingDashboard() {
                         </td>
 
                         {/* Room */}
-                        <td className="p-4 font-black text-slate-800 text-xs">
-                          Rm {req.roomNumber}
+                        <td className="p-4 text-xs">
+                          <div className="flex flex-col gap-0.5 text-left">
+                            <span className="font-bold gs-text-primary">Rm {req.roomNumber}</span>
+                            <span className="text-[10px] font-semibold gs-text-secondary">{req.roomType}</span>
+                          </div>
                         </td>
 
                         {/* Guest Name */}
-                        <td className="p-4 font-semibold text-slate-700 text-xs">
-                          <span className="block truncate" title={req.guestName}>
+                        <td className="p-4 text-xs">
+                          <span className="block truncate font-bold text-xs animate-fade-in-up gs-text-primary" title={req.guestName}>
                             {req.guestName}
                           </span>
                         </td>
@@ -699,12 +855,12 @@ export function HousekeepingDashboard() {
                           This allows long text to wrap across multiple lines
                           instead of pushing the table wider.
                         */}
-                        <td className="p-4 text-xs text-slate-600 gs-cell-details" title={req.requestDetails}>
+                        <td className="p-4 text-xs font-semibold gs-cell-details gs-text-secondary" title={req.requestDetails}>
                           {req.requestDetails}
                         </td>
 
                         {/* Submitted At */}
-                        <td className="p-4 text-[10px] text-slate-450 font-mono">
+                        <td className="p-4 text-[10px] text-[#1e293b] dark:text-slate-350 font-mono font-bold">
                           {formattedTime}
                         </td>
 
@@ -715,16 +871,14 @@ export function HousekeepingDashboard() {
 
                         {/* Status */}
                         <td className="p-4">
-                          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[9px] uppercase font-bold tracking-wider border ${
-                            req.status === 'Pending'
+                          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[9px] uppercase font-bold tracking-wider border ${req.status === 'Pending'
                               ? 'bg-amber-50 text-amber-800 border-amber-200'
                               : req.status === 'In Progress'
-                              ? 'bg-blue-50 text-blue-800 border-blue-200'
-                              : 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                          }`}>
-                            <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${
-                              req.status === 'Pending' ? 'bg-amber-500' : req.status === 'In Progress' ? 'bg-blue-500' : 'bg-emerald-500'
-                            }`} />
+                                ? 'bg-blue-50 text-blue-800 border-blue-200'
+                                : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                            }`}>
+                            <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${req.status === 'Pending' ? 'bg-amber-500' : req.status === 'In Progress' ? 'bg-blue-500' : 'bg-emerald-500'
+                              }`} />
                             <span>{req.status}</span>
                           </span>
                         </td>
@@ -734,7 +888,10 @@ export function HousekeepingDashboard() {
                           renderActionButtons(req, compact=true) uses smaller padding.
                         */}
                         <td className="p-4 pr-5 gs-cell-actions">
-                          {renderActionButtons(req, true)}
+                          <div className="flex flex-col gap-1.5 items-start">
+                            {renderActionButtons(req, true)}
+                            {req.status !== 'Completed' && renderStaffSelector(req)}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -755,36 +912,44 @@ export function HousekeepingDashboard() {
               });
 
               return (
-                <div 
+                <div
                   key={req.id}
-                  className={`bg-white rounded-2xl border p-5 shadow-sm space-y-4 flex flex-col justify-between transition-all ${
-                    req.status === 'Pending' 
-                      ? 'border-amber-250 bg-amber-50/5' 
+                  className={`bg-white rounded-2xl border p-5 shadow-sm space-y-4 flex flex-col justify-between transition-all ${req.status === 'Pending'
+                      ? 'border-amber-250 bg-amber-50/5'
                       : req.status === 'In Progress'
-                      ? 'border-blue-200 bg-blue-50/5'
-                      : 'border-slate-150 bg-slate-50/10 opacity-75'
-                  }`}
+                        ? 'border-blue-200 bg-blue-50/5'
+                        : 'border-slate-150 bg-slate-50/10 opacity-75'
+                    }`}
                 >
                   <div className="space-y-3">
                     <div className="flex justify-between items-start">
                       <span className="text-[10px] font-mono text-[#003366] font-extrabold">{req.id}</span>
-                      <span className={`px-2.5 py-0.5 rounded-full text-[9px] uppercase font-bold tracking-wider ${
-                        req.status === 'Pending'
+                      <span className={`px-2.5 py-0.5 rounded-full text-[9px] uppercase font-bold tracking-wider ${req.status === 'Pending'
                           ? 'bg-amber-100 text-amber-800 border'
                           : req.status === 'In Progress'
-                          ? 'bg-blue-100 text-blue-800 border'
-                          : 'bg-emerald-100 text-emerald-800 border'
-                      }`}>
+                            ? 'bg-blue-100 text-blue-800 border'
+                            : 'bg-emerald-100 text-emerald-800 border'
+                        }`}>
                         {req.status}
                       </span>
                     </div>
 
-                    <div className="text-left">
-                      <h5 className="font-black text-slate-800 text-sm">Room {req.roomNumber}</h5>
-                      <p className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
-                        <User className="h-3 w-3" />
-                        <span>{req.guestName}</span>
-                      </p>
+                    <div className="text-left space-y-2 border-b border-slate-100 dark:border-slate-800 pb-3">
+                      <div>
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider block">Room Number</span>
+                        <span className="text-xs font-bold gs-text-primary">Room {req.roomNumber}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider block">Room Type</span>
+                        <span className="text-xs font-semibold gs-text-secondary">{req.roomType}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider block">Guest Name</span>
+                        <div className="text-xs font-bold flex items-center gap-1.5 mt-0.5 gs-text-primary">
+                          <User className="h-3.5 w-3.5 text-[#003366] dark:text-sky-400 shrink-0" />
+                          <span>{req.guestName}</span>
+                        </div>
+                      </div>
                     </div>
 
                     <div className="flex flex-wrap gap-2 pt-1">
@@ -793,25 +958,45 @@ export function HousekeepingDashboard() {
                     </div>
 
                     {/* Details — naturally wraps in card layout */}
-                    <div className="bg-slate-50 border p-3 rounded-xl text-left text-xs text-slate-650 leading-relaxed font-mono break-words">
-                      {req.requestDetails}
+                    <div>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider block mb-1">Guest Details / Request</span>
+                      <div className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/50 p-3 rounded-xl text-left text-xs leading-relaxed font-mono break-words font-semibold gs-text-secondary">
+                        {req.requestDetails}
+                      </div>
                     </div>
 
-                    <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
+                    <div className="text-[10px] text-[#1e293b] dark:text-slate-350 font-mono font-bold flex items-center gap-1">
                       <Clock className="h-3.5 w-3.5" />
                       <span>Submitted: {formattedTime}</span>
                     </div>
                   </div>
 
                   {/* Type-specific Action buttons for mobile */}
-                  <div className="pt-3 border-t">
+                  <div className="pt-3 border-t space-y-2">
                     {renderActionButtons(req, false)}
+                    {req.status !== 'Completed' && renderStaffSelector(req)}
                   </div>
                 </div>
               );
             })}
           </div>
         </>
+      )}
+
+      {/* Toast Notification Banner */}
+      {localToast && (
+        <div className="fixed bottom-6 right-6 z-50 animate-fade-in-up">
+          <div className={`flex items-center gap-3 px-5 py-3 rounded-2xl shadow-2xl border text-xs font-bold transition-all duration-300 transform scale-100 ${localToast.type === 'success'
+              ? 'bg-slate-900 text-white border-emerald-500/30'
+              : 'bg-red-950 text-red-200 border-red-800'
+            }`}>
+            <div className="flex items-center gap-2">
+              <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${localToast.type === 'success' ? 'bg-emerald-450' : 'bg-red-500'
+                }`} />
+              <span>{localToast.message}</span>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

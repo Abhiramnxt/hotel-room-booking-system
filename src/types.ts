@@ -15,6 +15,10 @@ export interface Guest {
   address: string;
   government_id: string; // Adhaar Card, PAN, Passport
   created_at: string;
+  gender?: string;
+  city?: string;
+  preferred_room_type?: string;
+  updated_at?: string;
 }
 
 export interface Room {
@@ -85,6 +89,7 @@ export interface RoomServiceRequest {
   room_id: number;
   request_type: string; // e.g., Food, Towels, Water, Laundry
   request_status: 'Pending' | 'In Progress' | 'Delivered' | 'Cancelled';
+  assigned_staff?: string;
   created_at: string;
   // join fields
   room_number?: string;
@@ -94,6 +99,8 @@ export interface RoomServiceRequest {
 export interface Complaint {
   complaint_id: number;
   guest_id: number;
+  room_id: number;
+  booking_id: number;
   complaint_category:
     | 'Room Cleaning / Guest Services'
     | 'Air Conditioning Problem'
@@ -106,6 +113,7 @@ export interface Complaint {
   complaint_description: string;
   priority_level: 'Low' | 'Medium' | 'High' | 'Critical';
   complaint_status: 'Pending' | 'In Progress' | 'Resolved';
+  assigned_staff?: string;
   created_at: string;
   // join fields
   guest_name?: string;
@@ -182,6 +190,10 @@ export interface GuestAccount {
   is_activated: boolean;
   first_login_password_changed: boolean;
   created_at: string;
+  gender?: string;
+  city?: string;
+  preferred_room_type?: string;
+  updated_at?: string;
 }
 
 export interface CommunicationLog {

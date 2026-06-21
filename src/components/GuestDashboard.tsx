@@ -901,8 +901,12 @@ export function GuestDashboard({ loggedInGuest, onUpdateGuest }: GuestDashboardP
             </div>
             
             <h3 className="text-xl font-extrabold text-[#003366] font-heading tracking-tight leading-none">
-              Welcome, {guestName}
+              Welcome to Sai Nirvana Plaza
             </h3>
+            
+            <h4 className="text-sm font-bold text-slate-700">
+              {guestName}
+            </h4>
             
             <p className="text-xs text-slate-500 font-mono">
               Guest ID: <strong className="text-slate-800">{guestIdStr}</strong> • Registered Email: <strong className="text-slate-800">{guestEmail}</strong>
@@ -912,6 +916,22 @@ export function GuestDashboard({ loggedInGuest, onUpdateGuest }: GuestDashboardP
           {/* Quick Active Indicators and Settings */}
           <div className="flex flex-wrap gap-4 items-center">
             
+            {/* Dynamic Current Date display card */}
+            <div className="bg-slate-50 p-2.5 rounded-2xl border border-slate-200 flex items-center gap-3" id="current_date_display">
+              <Calendar className="h-4.5 w-4.5 text-[#003366]" />
+              <div className="text-left leading-none">
+                <span className="text-[9px] text-slate-400 font-bold block uppercase tracking-wider">Current Date</span>
+                <span className="text-xs font-bold text-slate-850 mt-0.5 block">
+                  {new Date().toLocaleDateString('en-GB', {
+                    weekday: 'long',
+                    day: 'numeric',
+                    month: 'long',
+                    year: 'numeric'
+                  })}
+                </span>
+              </div>
+            </div>
+
             <div className="bg-slate-50 p-2.5 rounded-2xl border border-slate-200 flex items-center gap-3">
               <div className={`h-2.5 w-2.5 rounded-full ${activeStays.length > 0 ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
               <div className="text-left leading-none">

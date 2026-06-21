@@ -183,13 +183,21 @@ async function main() {
       }
     }
 
-    // Insert room_availability
-    console.log('Importing room availability...');
-    if (data.room_availability) {
-      for (const ra of data.room_availability) {
+    // Insert room_availability in bulk batches
+    console.log('Importing room availability in batches...');
+    if (data.room_availability && data.room_availability.length > 0) {
+      const batchSize = 100;
+      for (let i = 0; i < data.room_availability.length; i += batchSize) {
+        const batch = data.room_availability.slice(i, i + batchSize);
+        const values = [];
+        const placeholders = [];
+        for (const ra of batch) {
+          placeholders.push('(?, ?, ?, ?)');
+          values.push(ra.availability_id, ra.room_id, ra.available_date, ra.availability_status);
+        }
         await conn.query(
-          'INSERT INTO room_availability (availability_id, room_id, available_date, availability_status) VALUES (?, ?, ?, ?)',
-          [ra.availability_id, ra.room_id, ra.available_date, ra.availability_status]
+          `INSERT INTO room_availability (availability_id, room_id, available_date, availability_status) VALUES ${placeholders.join(', ')}`,
+          values
         );
       }
     }

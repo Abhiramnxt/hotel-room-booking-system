@@ -53,6 +53,18 @@ export function CreateGuestAccountForm({ currentRole = 'Front Desk Staff' }: Cre
   const [dispatchingChannel, setDispatchingChannel] = useState<'WhatsApp' | 'Email' | null>(null);
   const [copiedText, setCopiedText] = useState(false);
   const [successToast, setSuccessToast] = useState('');
+  const [sessionPasswords, setSessionPasswords] = useState<Record<string, string>>({});
+
+  const getPasswordToShow = (acc: any) => {
+    if (!acc) return '';
+    if (sessionPasswords[acc.guest_id_str]) {
+      return sessionPasswords[acc.guest_id_str];
+    }
+    if (acc.password_hash && acc.password_hash.length === 64) {
+      return '🔒 Password Secured';
+    }
+    return acc.password_hash || '';
+  };
 
   // Polling ref for background checks
   const pollingInterval = useRef<NodeJS.Timeout | null>(null);
@@ -188,6 +200,10 @@ export function CreateGuestAccountForm({ currentRole = 'Front Desk Staff' }: Cre
           setMobileNumber('');
           setEmail('');
           
+          if (data.account.password_hash) {
+            setSessionPasswords(prev => ({ ...prev, [data.account.guest_id_str]: data.account.password_hash }));
+          }
+          
           await fetchAccounts();
           setSelectedAccount(data.account); // Focus on newly created guest account!
           
@@ -251,7 +267,8 @@ export function CreateGuestAccountForm({ currentRole = 'Front Desk Staff' }: Cre
 
   const handleCopyCredentials = (acc: any) => {
     playSound('tap');
-    const voucher = `SAI NIRVANA PLAZA - GUEST DIGITAL PASS\n===================================\nGuest ID: ${acc.guest_id_str}\nFull Name: ${acc.full_name}\nUsername/Login ID: ${acc.username}\nTemp Password: ${acc.password_hash}\nAccount Status: ${acc.is_activated ? 'ACTIVATED' : 'DEACTIVATED'}\n-----------------------------------\nAccess Gateway: ${window.location.origin}\nNote: Change password on your first login.\n===================================`;
+    const passToShow = getPasswordToShow(acc);
+    const voucher = `SAI NIRVANA PLAZA - GUEST DIGITAL PASS\n===================================\nGuest ID: ${acc.guest_id_str}\nFull Name: ${acc.full_name}\nUsername/Login ID: ${acc.username}\nTemp Password: ${passToShow}\nAccount Status: ${acc.is_activated ? 'ACTIVATED' : 'DEACTIVATED'}\n-----------------------------------\nAccess Gateway: ${window.location.origin}\nNote: Change password on your first login.\n===================================`;
     navigator.clipboard.writeText(voucher);
     setCopiedText(true);
     setTimeout(() => setCopiedText(false), 3000);
@@ -261,13 +278,15 @@ export function CreateGuestAccountForm({ currentRole = 'Front Desk Staff' }: Cre
     playSound('dispatch');
     setDispatchingChannel(channel);
     try {
+      const passToDispatch = getPasswordToShow(acc);
       const res = await fetch('/api/auth/dispatch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           account_id: acc.account_id,
           channel,
-          staff_member: "Reception Desk Admin"
+          staff_member: "Reception Desk Admin",
+          temp_password: passToDispatch === '🔒 Password Secured' ? undefined : passToDispatch
         })
       });
 
@@ -299,6 +318,9 @@ export function CreateGuestAccountForm({ currentRole = 'Front Desk Staff' }: Cre
         playSound('success');
         const data = await res.json();
         if (data.success) {
+          if (data.account && data.account.password_hash) {
+            setSessionPasswords(prev => ({ ...prev, [data.account.guest_id_str]: data.account.password_hash }));
+          }
           fetchAccounts();
           setSelectedAccount(data.account);
           setSuccessToast("Credentials regenerated safely!");
@@ -314,6 +336,7 @@ export function CreateGuestAccountForm({ currentRole = 'Front Desk Staff' }: Cre
     playSound('print');
     const printWindow = window.open('', '_blank');
     if (printWindow) {
+      const passToShow = getPasswordToShow(acc);
       printWindow.document.write(`
         <html>
         <head>
@@ -334,7 +357,7 @@ export function CreateGuestAccountForm({ currentRole = 'Front Desk Staff' }: Cre
             <div class="field"><span class="label">GUEST NAME:</span><span class="value">${acc.full_name}</span></div>
             <div class="field"><span class="label">GUEST ID:</span><span class="value" style="color: #003366;">${acc.guest_id_str}</span></div>
             <div class="field"><span class="label">USERNAME:</span><span class="value" style="color: #003366;">${acc.username}</span></div>
-            <div class="field"><span class="label">TEMP PASSWORD:</span><span class="value" style="background:#ddd; padding:2px 8px;">${acc.password_hash}</span></div>
+            <div class="field"><span class="label">TEMP PASSWORD:</span><span class="value" style="background:#ddd; padding:2px 8px;">${passToShow}</span></div>
             <div class="field"><span class="label">ACCESS PORTAL:</span><span class="value">${window.location.origin}</span></div>
             <div class="footer">
               First login requires password configuration. Under Sri Nirvana administrative protocols, this document is strictly confidential and must not be shared.
@@ -746,7 +769,12 @@ export function CreateGuestAccountForm({ currentRole = 'Front Desk Staff' }: Cre
                     <div className="space-y-2 font-mono text-[11px] text-slate-300">
                       <p className="flex justify-between"><span className="text-slate-400">Guest Access ID:</span> <strong className="text-[#F9D976]">{selectedAccount.guest_id_str}</strong></p>
                       <p className="flex justify-between"><span className="text-slate-400">Username/Login:</span> <strong className="text-[#F9D976]">{selectedAccount.username}</strong></p>
-                      <p className="flex justify-between"><span className="text-slate-400">Temp Password:</span> <strong className="text-rose-300 bg-rose-500/15 border border-rose-500/25 px-1.5 py-0.5 rounded">{selectedAccount.password_hash}</strong></p>
+                      <p className="flex justify-between"><span className="text-slate-400">Temp Password:</span> <strong className="text-rose-300 bg-rose-500/15 border border-rose-500/25 px-1.5 py-0.5 rounded">{getPasswordToShow(selectedAccount)}</strong></p>
+                      {getPasswordToShow(selectedAccount) === '🔒 Password Secured' && (
+                        <p className="text-[9px] text-slate-400 mt-1 italic text-right leading-tight max-w-[250px] ml-auto">
+                          Original temporary password is no longer available because it has been securely encrypted.
+                        </p>
+                      )}
                       <p className="flex justify-between"><span className="text-slate-400">Reset Status:</span> <strong className={selectedAccount.first_login_password_changed ? 'text-emerald-400' : 'text-amber-400'}>{selectedAccount.first_login_password_changed ? 'COMPLETED' : 'RESET REQUIRED'}</strong></p>
                       <p className="flex justify-between"><span className="text-slate-400">Active Access:</span> <strong className={selectedAccount.is_activated ? 'text-emerald-400' : 'text-rose-400'}>{selectedAccount.is_activated ? 'GRANTED' : 'BLOCKED/SUSPENDED'}</strong></p>
                     </div>

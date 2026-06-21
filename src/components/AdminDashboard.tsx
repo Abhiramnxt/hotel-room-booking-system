@@ -100,6 +100,32 @@ function InnerAdminDashboard({ currentRole = 'Hotel Manager' }: AdminDashboardPr
 
   useEffect(() => {
     fetchStats();
+
+    // ── Auto-refresh every 30 seconds so occupancy stays current ──
+    const pollInterval = setInterval(() => {
+      fetchStats();
+    }, 30000);
+
+    // ── Instant sync when FrontDesk triggers a check-in / check-out ──
+    // FrontDeskDashboard writes 'snp_booking_status_change' to localStorage
+    // and dispatches the same key as a custom DOM event (same-tab).
+    const handleStorageSync = (e: StorageEvent) => {
+      if (e.key === 'snp_booking_status_change' || e.key === 'snp_service_status_change') {
+        fetchStats();
+      }
+    };
+    const handleSameTabSync = () => fetchStats();
+
+    window.addEventListener('storage', handleStorageSync);
+    window.addEventListener('snp_booking_status_change', handleSameTabSync);
+    window.addEventListener('snp_service_status_change', handleSameTabSync);
+
+    return () => {
+      clearInterval(pollInterval);
+      window.removeEventListener('storage', handleStorageSync);
+      window.removeEventListener('snp_booking_status_change', handleSameTabSync);
+      window.removeEventListener('snp_service_status_change', handleSameTabSync);
+    };
   }, []);
 
   const handleUpdateCorporate = async (corpId: number, nextStatus: 'Approved' | 'Rejected') => {
@@ -166,7 +192,9 @@ function InnerAdminDashboard({ currentRole = 'Hotel Manager' }: AdminDashboardPr
               <div className="space-y-1">
                 <div className="flex items-baseline gap-2">
                   <h3 className="text-2xl font-bold font-mono text-[#003366]">{Number(metrics.occupancyRate) || 0}%</h3>
-                  <span className="text-xs text-slate-500 font-medium">({Number(metrics.occupiedRooms) || 0} / 9 Rooms occupied)</span>
+                  <span className="text-xs text-slate-500 font-medium">
+                    ({Number(metrics.occupiedRooms) || 0} / {Number(metrics.availableRooms) + Number(metrics.occupiedRooms) + Number(metrics.dirtyRooms) + Number(metrics.maintenanceRooms) || 0} Rooms occupied)
+                  </span>
                 </div>
                 {/* Visual Progress rate */}
                 <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">

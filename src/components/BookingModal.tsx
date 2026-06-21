@@ -7,7 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   X, Check, Sparkles, Receipt, ShieldCheck, AlertCircle, RefreshCw, Smartphone 
 } from 'lucide-react';
-import { Room } from '../types';
+import { Room, GuestAccount } from '../types';
 import { playSound } from '../soundUtils';
 
 interface BookingModalProps {
@@ -16,13 +16,14 @@ interface BookingModalProps {
   checkOutDate: string;
   onClose: () => void;
   onBookingSuccess: () => void;
+  loggedInGuest?: GuestAccount | null;
 }
 
-export function BookingModal({ room, checkInDate, checkOutDate, onClose, onBookingSuccess }: BookingModalProps) {
+export function BookingModal({ room, checkInDate, checkOutDate, onClose, onBookingSuccess, loggedInGuest }: BookingModalProps) {
   const [selectedRoom, setSelectedRoom] = useState<Room>(room);
-  const [guestName, setGuestName] = useState('');
-  const [guestEmail, setGuestEmail] = useState('');
-  const [guestPhone, setGuestPhone] = useState('');
+  const [guestName, setGuestName] = useState(loggedInGuest?.full_name || '');
+  const [guestEmail, setGuestEmail] = useState(loggedInGuest?.email || '');
+  const [guestPhone, setGuestPhone] = useState(loggedInGuest?.mobile_number || '');
   const [guestAddress, setGuestAddress] = useState('');
   const [govId, setGovId] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'Credit Card' | 'Debit Card' | 'Net Banking' | 'Cash'>('UPI');

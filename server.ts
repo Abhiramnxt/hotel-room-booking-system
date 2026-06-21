@@ -6,8 +6,10 @@
 import 'dotenv/config';
 import express from 'express';
 import path from 'path';
+import crypto from 'crypto';
 import {GoogleGenAI} from '@google/genai';
 import {initDB, dbOps} from './src/server_db.js';
+import {execute} from './src/mysql_client.js';
 import { validateEnvironment, sendWhatsAppMessage, delay, formatIndianPhoneNumber } from './src/utils/whatsappService.js';
 import { validateNodemailerEnvironment, sendEmail } from './src/utils/nodemailerService.js';
 
@@ -28,6 +30,10 @@ function getFormattedDateString(d: any): string {
     return d;
   }
   return String(d);
+}
+
+function hashPassword(password: string): string {
+  return crypto.createHash('sha256').update(password).digest('hex');
 }
 
 initDB().catch(console.error);
@@ -255,6 +261,37 @@ app.put('/api/bookings/archive', async (req, res) => {
   }
 });
 
+// Delete Booking (Strictly only Checked-Out/Archived bookings)
+app.delete('/api/bookings/:id', async (req, res) => {
+  const bookingId = Number(req.params.id);
+  if (!bookingId || isNaN(bookingId)) {
+    return res.status(400).json({ error: "Invalid Booking ID." });
+  }
+  try {
+    const success = await dbOps.deleteBooking(bookingId);
+    if (success) {
+      res.json({ success: true, message: "Archived guest record deleted successfully." });
+    } else {
+      res.status(400).json({
+        success: false,
+        message: "Only archived (Checked-Out) bookings can be deleted."
+      });
+    }
+  } catch (err: any) {
+    console.error(`Error deleting booking ${bookingId}:`, err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/staff', async (req, res) => {
+  try {
+    const staff = await dbOps.getStaff();
+    res.json({ staff });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 5. Housekeeping
 app.get('/api/housekeeping', async (req, res) => {
   const tasks = await dbOps.getHousekeeping();
@@ -263,11 +300,11 @@ app.get('/api/housekeeping', async (req, res) => {
 
 app.put('/api/housekeeping/:id/status', async (req, res) => {
   const taskId = Number(req.params.id);
-  const { status } = req.body;
+  const { status, assigned_staff } = req.body;
   if (!status) return res.status(400).json({ error: "Status required." });
 
   try {
-    const updated = await dbOps.updateHousekeepingTask(taskId, status);
+    const updated = await dbOps.updateHousekeepingTask(taskId, status, assigned_staff);
     res.json({ success: true, task: updated });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -299,11 +336,11 @@ app.post('/api/room-service', async (req, res) => {
 
 app.put('/api/room-service/:id/status', async (req, res) => {
   const requestId = Number(req.params.id);
-  const { status } = req.body;
+  const { status, assigned_staff } = req.body;
   if (!status) return res.status(400).json({ error: "Status required." });
 
   try {
-    const updated = await dbOps.updateRoomServiceStatus(requestId, status);
+    const updated = await dbOps.updateRoomServiceStatus(requestId, status, assigned_staff);
     res.json({ success: true, request: updated });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -401,11 +438,11 @@ app.post('/api/complaints', async (req, res) => {
 
 app.put('/api/complaints/:id/status', async (req, res) => {
   const complaintId = Number(req.params.id);
-  const { status } = req.body;
+  const { status, assigned_staff } = req.body;
   if (!status) return res.status(400).json({ error: "Status required." });
 
   try {
-    const updated = await dbOps.updateComplaintStatus(complaintId, status);
+    const updated = await dbOps.updateComplaintStatus(complaintId, status, assigned_staff);
     res.json({ success: true, complaint: updated });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -793,6 +830,61 @@ app.post('/api/auth/guest-accounts', async (req, res) => {
   }
 });
 
+// Guest self-registration endpoint
+app.post('/api/auth/register', async (req, res) => {
+  const { full_name, mobile_number, email, password, confirm_password, gender, city, preferred_room_type } = req.body;
+  if (!full_name || !mobile_number || !email || !password || !confirm_password) {
+    return res.status(400).json({ error: "All fields are required." });
+  }
+  if (password !== confirm_password) {
+    return res.status(400).json({ error: "Passwords do not match." });
+  }
+  let formattedMobile = mobile_number;
+  const formatted = formatIndianPhoneNumber(mobile_number);
+  if (formatted) {
+    formattedMobile = formatted;
+  }
+  try {
+    const accounts = await dbOps.getGuestAccounts();
+    const duplicate = accounts.find(acc => 
+      acc.email.toLowerCase() === email.toLowerCase() ||
+      acc.mobile_number === formattedMobile
+    );
+    if (duplicate) {
+      return res.status(400).json({ error: "An account with this email or mobile number already exists." });
+    }
+    const password_hash = hashPassword(password);
+    const newAcc = await dbOps.registerGuestAccount({
+      full_name,
+      mobile_number: formattedMobile,
+      email,
+      password_hash,
+      gender,
+      city,
+      preferred_room_type
+    });
+    
+    // Write an audit log entry in front_desk_records under GUEST_SELF_REGISTER payload
+    const logPayload = JSON.stringify({
+      full_name,
+      email,
+      mobile_number: formattedMobile,
+      guest_id_str: newAcc.guest_id_str,
+      date_time: new Date().toISOString(),
+      action: 'Guest Self Registration'
+    });
+    await execute(
+      'INSERT INTO front_desk_records (ref_type, ref_id, payload) VALUES ("GUEST_SELF_REGISTER", ?, ?)',
+      [newAcc.account_id, logPayload]
+    );
+
+    res.json({ success: true, account: newAcc });
+  } catch (err: any) {
+    console.error('Error in self-registration:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // User login endpoint
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
@@ -805,9 +897,13 @@ app.post('/api/auth/login', async (req, res) => {
 
   // 1. Look in Guest accounts
   const accounts = await dbOps.getGuestAccounts();
+  const formattedInputMobile = formatIndianPhoneNumber(username);
   const guestAcc = accounts.find(acc => 
     acc.username.toLowerCase() === username.toLowerCase() || 
-    acc.guest_id_str.toLowerCase() === username.toLowerCase()
+    acc.guest_id_str.toLowerCase() === username.toLowerCase() ||
+    (acc.email && acc.email.toLowerCase() === username.toLowerCase()) ||
+    (acc.mobile_number && acc.mobile_number === username) ||
+    (formattedInputMobile && acc.mobile_number === formattedInputMobile)
   );
   console.log('[Diagnostics] User Found In Guest Accounts:', !!guestAcc);
   if (guestAcc) {
@@ -816,7 +912,8 @@ app.post('/api/auth/login', async (req, res) => {
       console.log('[Diagnostics] Authentication Result: Failed - Guest account deactivated');
       return res.status(403).json({ error: "Access Restricted. Your guest account has been deactivated. Please contact Sai Nirvana Plaza Reception." });
     }
-    const passwordMatchGuest = guestAcc.password_hash === password;
+    const inputPasswordHash = hashPassword(password);
+    const passwordMatchGuest = guestAcc.password_hash === password || guestAcc.password_hash === inputPasswordHash;
     console.log('[Diagnostics] Password Match (guest):', passwordMatchGuest);
     if (passwordMatchGuest) {
       console.log('[Diagnostics] Authentication Result: Success - Guest login');
@@ -867,8 +964,8 @@ app.post('/api/auth/login', async (req, res) => {
     return res.json({ success: true, role: 'Accounts Staff' });
   }
 
-  console.log('[Diagnostics] Authentication Result: Failed - Invalid Guest ID, Username or Password');
-  res.status(401).json({ error: "Invalid Guest ID, Username or Password." });
+  console.log('[Diagnostics] Authentication Result: Failed - Invalid Guest ID, Username, Email, Mobile Number or Password');
+  res.status(401).json({ error: "Invalid Guest ID, Username, Email, Mobile Number or Password." });
 });
 
 // Change Password on first login
@@ -878,7 +975,8 @@ app.post('/api/auth/change-password', async (req, res) => {
     return res.status(400).json({ error: "Username and password are required." });
   }
   try {
-    const updated = await dbOps.updateGuestAccountPassword(username, new_password);
+    const hashedNewPassword = hashPassword(new_password);
+    const updated = await dbOps.updateGuestAccountPassword(username, hashedNewPassword);
     res.json({ success: true, account: updated });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -936,7 +1034,7 @@ app.post('/api/auth/regenerate-credentials', async (req, res) => {
 
     // Instatiate new temporary key Passcode
     const nextPassword = `Temp@${Math.floor(100 + Math.random() * 900)}`;
-    const updated = await dbOps.updateGuestAccountPassword(acc.username, nextPassword);
+    const updated = await dbOps.updateGuestAccountPassword(acc.username, nextPassword, 0);
     
     // Set changed back to 0 so they must change it again on next login
     updated.first_login_password_changed = false;
@@ -1032,8 +1130,8 @@ async function runWhatsAppDispatch(
 async function runEmailDispatch(logId: number, recipientEmail: string, message: string): Promise<boolean> {
   let subject = "Sai Nirvana Plaza - Update";
   try {
-    const logs = await dbOps.getCommunicationLogs();
-    const matchedLog = logs.find(l => l.log_id === logId);
+    const logs = await dbOps.getCommunicationLogs({ log_id: logId });
+    const matchedLog = logs[0];
     if (matchedLog && matchedLog.communication_type) {
       subject = `Sai Nirvana Plaza - ${matchedLog.communication_type}`;
     }
@@ -1153,7 +1251,8 @@ app.post('/api/auth/dispatch', async (req, res) => {
     staff_member, 
     customMessage, 
     is_test,
-    retry_log_id 
+    retry_log_id,
+    temp_password
   } = req.body;
 
   try {
@@ -1162,6 +1261,9 @@ app.post('/api/auth/dispatch', async (req, res) => {
     let finalRecipientEmail = "";
     let finalPhone = "";
     let finalCommType = communication_type || "Guest Login Credentials";
+    if (finalCommType === 'Send Booking Confirmation') {
+      finalCommType = 'Booking Confirmation';
+    }
     let finalStaff = staff_member || "Operations Console";
     let resolvedBookingId = booking_id || "";
 
@@ -1169,8 +1271,8 @@ app.post('/api/auth/dispatch', async (req, res) => {
 
     // 1. Resolve Details if Retrying
     if (retry_log_id) {
-      const logs = await dbOps.getCommunicationLogs();
-      oldLog = logs.find(l => l.log_id === Number(retry_log_id));
+      const logs = await dbOps.getCommunicationLogs({ log_id: Number(retry_log_id) });
+      oldLog = logs[0];
       if (!oldLog) {
         return res.status(404).json({ 
           success: false,
@@ -1198,15 +1300,11 @@ app.post('/api/auth/dispatch', async (req, res) => {
     } 
     // 3. Resolve normally via ids
     else {
-      const bookings = await dbOps.getBookings();
-      const guests = await dbOps.getGuests();
-      const accounts = await dbOps.getGuestAccounts();
-
       console.log(`[Recipient Selection] Initiating lookup: account_id=${account_id || 'N/A'}, guest_id=${guest_id || 'N/A'}, booking_id=${booking_id || 'N/A'}`);
 
-      const matchedAcc = account_id ? accounts.find(a => String(a.account_id) === String(account_id)) : null;
-      const matchedGuest = guest_id ? guests.find(g => String(g.guest_id) === String(guest_id)) : null;
-      let matchedBooking = booking_id ? [...bookings].reverse().find(b => String(b.booking_id) === String(booking_id)) : null;
+      const matchedAcc = account_id ? await dbOps.getGuestAccountById(Number(account_id)) : null;
+      const matchedGuest = (!matchedAcc && guest_id) ? await dbOps.getGuestById(Number(guest_id)) : null;
+      let matchedBooking = booking_id ? await dbOps.getBookingById(Number(booking_id)) : null;
 
       if (matchedAcc) {
         console.log(`[Recipient Selection] Resolved from Guest Account record: name="${matchedAcc.full_name}", phone="${matchedAcc.mobile_number}"`);
@@ -1216,8 +1314,11 @@ app.post('/api/auth/dispatch', async (req, res) => {
         finalPhone = matchedAcc.mobile_number;
         
         // Associate with booking metadata if available for templates
-        const guest = guests.find(g => g.email.toLowerCase() === matchedAcc.email.toLowerCase());
-        const booking = [...bookings].reverse().find(b => b.guest_email.toLowerCase() === matchedAcc.email.toLowerCase() || (guest && b.guest_id === guest.guest_id));
+        const guest = await dbOps.getGuestByEmail(matchedAcc.email);
+        let booking = await dbOps.getLatestBookingForEmail(matchedAcc.email);
+        if (!booking && guest) {
+          booking = await dbOps.getLatestBookingForGuest(guest.guest_id);
+        }
         if (booking) {
           resolvedBookingId = booking.booking_id;
         }
@@ -1228,14 +1329,14 @@ app.post('/api/auth/dispatch', async (req, res) => {
         finalRecipientEmail = matchedGuest.email;
         finalPhone = matchedGuest.mobile_number;
 
-        const booking = [...bookings].reverse().find(b => b.guest_id === matchedGuest.guest_id);
+        const booking = await dbOps.getLatestBookingForGuest(matchedGuest.guest_id);
         if (booking) {
           resolvedBookingId = booking.booking_id;
         }
       } else {
         // If booking_id was not passed but we had guest_id, search for booking first
         if (!matchedBooking && guest_id) {
-          matchedBooking = [...bookings].reverse().find(b => String(b.guest_id) === String(guest_id));
+          matchedBooking = await dbOps.getLatestBookingForGuest(Number(guest_id));
         }
         
         if (matchedBooking) {
@@ -1247,7 +1348,7 @@ app.post('/api/auth/dispatch', async (req, res) => {
           finalPhone = matchedBooking.guest_phone;
         } else {
           // Fallback options
-          let fallbackAcc = accounts.find(a => String(a.guest_id_str) === String(guest_id));
+          let fallbackAcc = guest_id ? await dbOps.getGuestAccountByIdOrGuestIdStr(null, String(guest_id)) : null;
           if (fallbackAcc) {
             console.log(`[Recipient Selection] Resolved from Fallback Guest Account record: name="${fallbackAcc.full_name}", phone="${fallbackAcc.mobile_number}"`);
             finalGuestName = fallbackAcc.full_name;
@@ -1286,64 +1387,11 @@ app.post('/api/auth/dispatch', async (req, res) => {
       finalPhone = formatted;
     }
 
-    // Look up credentials from guest accounts to append to notification templates
-    const lookupAccounts = await dbOps.getGuestAccounts();
-    const activeAcc = lookupAccounts.find(a => 
-      String(a.guest_id_str) === String(finalGuestIdStr) || 
-      String(a.account_id) === String(account_id)
-    );
-    const tempUsername = activeAcc ? activeAcc.username : "guest_temp";
-    const tempPassword = activeAcc ? activeAcc.password_hash : "Password@123";
-
-    // Capture standard template fallback text
-    let finalMessageContent = customMessage || "";
-    if (!finalMessageContent) {
-      const allBookingsForTemplate = await dbOps.getBookings();
-      const activeBooking = allBookingsForTemplate.find(b => String(b.booking_id) === String(resolvedBookingId)) || {
-        booking_id: resolvedBookingId || 101,
-        check_in_date: "08-Jun-2026",
-        check_out_date: "12-Jun-2026",
-        room_number: "201",
-        price_per_night: 3500
-      };
-      
-      finalMessageContent = await getTemplateMessage(
-        finalCommType, 
-        activeAcc || { full_name: finalGuestName, guest_id_str: finalGuestIdStr, username: tempUsername, password_hash: tempPassword }, 
-        activeBooking
-      );
-    }
-
-    // Try to construct bespoke layout using Gemini if available
-    if (getAiClient()) {
-      try {
-        const prompt = `Compose a short, highly secure luxury hotel message for active guest ${finalGuestName}. Custom content type classification: ${finalCommType}. Context: ${finalMessageContent}. Contact channel: WhatsApp/Email. Keep it under 2 lines. Maintain polished premium resort Sai Nirvana Plaza tone. IMPORTANT: If classification is "Guest Login Credentials" or "User Credentials", you MUST preserve and include the exact Username: ${tempUsername} and Temporary Password: ${tempPassword} fields so the guest can access their account.`;
-        const aiClient = getAiClient();
-        if (aiClient) {
-          const aiResponse = await aiClient.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt
-          });
-          if (aiResponse && aiResponse.text) {
-            const genText = aiResponse.text.trim();
-            if ((finalCommType === "Guest Login Credentials" || finalCommType === "User Credentials") && (!genText.includes(tempUsername) || !genText.includes(tempPassword))) {
-              console.warn("Gemini omitted credentials from generated message. Reverting to safe local template.");
-            } else {
-              finalMessageContent = genText;
-            }
-          }
-        }
-      } catch (geminiError) {
-        console.warn("Gemini Customization issue, using standard template.");
-      }
-    }
-
-    // 4. PROCESS RETRY OR DUAL-DISPATCH FLOW
     // 4. PROCESS RETRY OR DUAL-DISPATCH FLOW
     if (retry_log_id) {
       // Single log retry flow
-      const logs = await dbOps.getCommunicationLogs();
-      const oldLog = logs.find(l => l.log_id === Number(retry_log_id));
+      const logs = await dbOps.getCommunicationLogs({ log_id: Number(retry_log_id) });
+      const oldLog = logs[0];
       if (!oldLog) {
         return res.status(404).json({ 
           success: false,
@@ -1357,113 +1405,192 @@ app.post('/api/auth/dispatch', async (req, res) => {
       await dbOps.updateCommunicationLogStatus(oldLog.log_id, '🔵 In Progress', retryAttempts, "", oldLog.channel === 'Email' ? finalRecipientEmail : finalPhone, "");
       await dbOps.updateCommunicationLogStatus(oldLog.log_id, '🟡 Pending Delivery', retryAttempts, "", oldLog.channel === 'Email' ? finalRecipientEmail : finalPhone, "");
 
-      let succeeded = false;
-      if (oldLog.channel === 'WhatsApp') {
-        succeeded = await runWhatsAppDispatch(oldLog.log_id, finalPhone, finalMessageContent, finalGuestName, resolvedBookingId);
-      } else {
-        succeeded = await runEmailDispatch(oldLog.log_id, finalRecipientEmail, finalMessageContent);
-      }
+      // Execute dispatch and content generation in background
+      setTimeout(async () => {
+        try {
+          // Look up credentials from guest accounts to append to notification templates
+           const activeAcc = await dbOps.getGuestAccountByIdOrGuestIdStr(account_id ? Number(account_id) : null, finalGuestIdStr);
+           const tempUsername = activeAcc ? activeAcc.username : "guest_temp";
+           const tempPassword = temp_password || (activeAcc && activeAcc.password_hash && activeAcc.password_hash.length !== 64 ? activeAcc.password_hash : "🔒 Password Secured");
 
-      const updatedLogs = await dbOps.getCommunicationLogs();
-      const updatedLog = updatedLogs.find(l => l.log_id === oldLog.log_id) || oldLog;
+          // Capture standard template fallback text
+          let finalMessageContent = customMessage || "";
+          if (!finalMessageContent) {
+            const activeBooking = resolvedBookingId ? await dbOps.getBookingById(Number(resolvedBookingId)) : null;
+            const finalBooking = activeBooking || {
+              booking_id: resolvedBookingId || 101,
+              check_in_date: "08-Jun-2026",
+              check_out_date: "12-Jun-2026",
+              room_number: "201",
+              price_per_night: 3500
+            };
+            
+            finalMessageContent = await getTemplateMessage(
+              finalCommType, 
+              activeAcc || { full_name: finalGuestName, guest_id_str: finalGuestIdStr, username: tempUsername, password_hash: tempPassword }, 
+              finalBooking
+            );
+          }
 
-      if (succeeded) {
-        return res.json({ success: true, log: updatedLog });
-      } else {
-        return res.status(400).json({
-          success: false,
-          error: updatedLog.failure_reason || "Delivery retry failed.",
-          error_message: updatedLog.failure_reason || "Delivery retry failed.",
-          reason: updatedLog.failure_reason || "Delivery retry failed.",
-          log: updatedLog
-        });
-      }
+          // Try to construct bespoke layout using Gemini if available
+          if (getAiClient()) {
+            try {
+              const prompt = `Compose a short, highly secure luxury hotel message for active guest ${finalGuestName}. Custom content type classification: ${finalCommType}. Context: ${finalMessageContent}. Contact channel: WhatsApp/Email. Keep it under 2 lines. Maintain polished premium resort Sai Nirvana Plaza tone. IMPORTANT: If classification is "Guest Login Credentials" or "User Credentials", you MUST preserve and include the exact Username: ${tempUsername} and Temporary Password: ${tempPassword} fields so the guest can access their account.`;
+              const aiClient = getAiClient();
+              if (aiClient) {
+                const aiResponse = await aiClient.models.generateContent({
+                  model: 'gemini-2.5-flash',
+                  contents: prompt
+                });
+                if (aiResponse && aiResponse.text) {
+                  const genText = aiResponse.text.trim();
+                  if ((finalCommType === "Guest Login Credentials" || finalCommType === "User Credentials") && (!genText.includes(tempUsername) || !genText.includes(tempPassword))) {
+                    console.warn("Gemini omitted credentials from generated message. Reverting to safe local template.");
+                  } else {
+                    finalMessageContent = genText;
+                  }
+                }
+              }
+            } catch (geminiError) {
+              console.warn("Gemini Customization issue, using standard template.");
+            }
+          }
+
+          if (oldLog.channel === 'WhatsApp') {
+            await runWhatsAppDispatch(oldLog.log_id, finalPhone, finalMessageContent, finalGuestName, resolvedBookingId);
+          } else {
+            await runEmailDispatch(oldLog.log_id, finalRecipientEmail, finalMessageContent);
+          }
+        } catch (e) {
+          console.error("Background retry execution error:", e);
+        }
+      }, 0);
+
+      // Return immediately with in-progress log
+      return res.json({ 
+        success: true, 
+        log: { 
+          ...oldLog, 
+          status_info: '🟡 Pending Delivery', 
+          delivery_attempts: retryAttempts 
+        } 
+      });
     } else {
       // NEW DISPATCH - TRIGGER BOTH INDEPENDENTLY (Waterfall workflow satisfying the requirements)
       console.log("=== INITIATING COMPLETELY INDEPENDENT DISPATCH HIERARCHY ===");
+      const targetChannel = channel || 'WhatsApp';
 
-      // Create WhatsApp Audit Entry first
-      const whatsappLog = await dbOps.createCommunicationLog({
-        guest_id_str: finalGuestIdStr,
-        guest_name: finalGuestName,
-        channel: 'WhatsApp',
-        status_info: '🔵 In Progress',
-        staff_member: finalStaff,
-        communication_type: finalCommType,
-        recipient_email: finalPhone,
-        api_response: "",
-        failure_reason: ""
-      });
+      // Create WhatsApp and Email Audit Entries in parallel to reduce sequential database round-trips
+      const [whatsappLog, emailLog] = await Promise.all([
+        dbOps.createCommunicationLog({
+          guest_id_str: finalGuestIdStr,
+          guest_name: finalGuestName,
+          channel: 'WhatsApp',
+          status_info: '🔵 In Progress',
+          staff_member: finalStaff,
+          communication_type: finalCommType,
+          recipient_email: finalPhone,
+          api_response: "",
+          failure_reason: ""
+        }),
+        dbOps.createCommunicationLog({
+          guest_id_str: finalGuestIdStr,
+          guest_name: finalGuestName,
+          channel: 'Email',
+          status_info: '🔵 In Progress',
+          staff_member: finalStaff,
+          communication_type: finalCommType,
+          recipient_email: finalRecipientEmail,
+          api_response: "",
+          failure_reason: ""
+        })
+      ]);
 
-      // Create Email Audit Entry second
-      const emailLog = await dbOps.createCommunicationLog({
-        guest_id_str: finalGuestIdStr,
-        guest_name: finalGuestName,
-        channel: 'Email',
-        status_info: '🔵 In Progress',
-        staff_member: finalStaff,
-        communication_type: finalCommType,
-        recipient_email: finalRecipientEmail,
-        api_response: "",
-        failure_reason: ""
-      });
+      // Set both to Pending in parallel
+      await Promise.all([
+        dbOps.updateCommunicationLogStatus(whatsappLog.log_id, '🟡 Pending Delivery', 1, "", finalPhone, ""),
+        dbOps.updateCommunicationLogStatus(emailLog.log_id, '🟡 Pending Delivery', 1, "", finalRecipientEmail, "")
+      ]);
 
-      // Set both to Pending
-      await dbOps.updateCommunicationLogStatus(whatsappLog.log_id, '🟡 Pending Delivery', 1, "", finalPhone, "");
-      await dbOps.updateCommunicationLogStatus(emailLog.log_id, '🟡 Pending Delivery', 1, "", finalRecipientEmail, "");
+      // Run dispatches asynchronously in background
+      setTimeout(async () => {
+        try {
+          // Look up credentials from guest accounts to append to notification templates
+           const activeAcc = await dbOps.getGuestAccountByIdOrGuestIdStr(account_id ? Number(account_id) : null, finalGuestIdStr);
+           const tempUsername = activeAcc ? activeAcc.username : "guest_temp";
+           const tempPassword = temp_password || (activeAcc && activeAcc.password_hash && activeAcc.password_hash.length !== 64 ? activeAcc.password_hash : "🔒 Password Secured");
 
-      if (targetChannel === 'WhatsApp') {
-        console.log(`[Queue Runner] Processing WhatsApp Dispatch Log #${whatsappLog.log_id}`);
-        const wsSucceeded = await runWhatsAppDispatch(whatsappLog.log_id, finalPhone, finalMessageContent, finalGuestName, resolvedBookingId);
-        
-        // Also run email asynchronously in the background as a fallback/waterfall as originally designed
-        setTimeout(async () => {
-          console.log(`[Queue Runner] Transitioning to Email Log #${emailLog.log_id}`);
-          await runEmailDispatch(emailLog.log_id, finalRecipientEmail, finalMessageContent);
+          // Capture standard template fallback text
+          let finalMessageContent = customMessage || "";
+          if (!finalMessageContent) {
+            const activeBooking = resolvedBookingId ? await dbOps.getBookingById(Number(resolvedBookingId)) : null;
+            const finalBooking = activeBooking || {
+              booking_id: resolvedBookingId || 101,
+              check_in_date: "08-Jun-2026",
+              check_out_date: "12-Jun-2026",
+              room_number: "201",
+              price_per_night: 3500
+            };
+            
+            finalMessageContent = await getTemplateMessage(
+              finalCommType, 
+              activeAcc || { full_name: finalGuestName, guest_id_str: finalGuestIdStr, username: tempUsername, password_hash: tempPassword }, 
+              finalBooking
+            );
+          }
+
+          // Try to construct bespoke layout using Gemini if available
+          if (getAiClient()) {
+            try {
+              const prompt = `Compose a short, highly secure luxury hotel message for active guest ${finalGuestName}. Custom content type classification: ${finalCommType}. Context: ${finalMessageContent}. Contact channel: WhatsApp/Email. Keep it under 2 lines. Maintain polished premium resort Sai Nirvana Plaza tone. IMPORTANT: If classification is "Guest Login Credentials" or "User Credentials", you MUST preserve and include the exact Username: ${tempUsername} and Temporary Password: ${tempPassword} fields so the guest can access their account.`;
+              const aiClient = getAiClient();
+              if (aiClient) {
+                const aiResponse = await aiClient.models.generateContent({
+                  model: 'gemini-2.5-flash',
+                  contents: prompt
+                });
+                if (aiResponse && aiResponse.text) {
+                  const genText = aiResponse.text.trim();
+                  if ((finalCommType === "Guest Login Credentials" || finalCommType === "User Credentials") && (!genText.includes(tempUsername) || !genText.includes(tempPassword))) {
+                    console.warn("Gemini omitted credentials from generated message. Reverting to safe local template.");
+                  } else {
+                    finalMessageContent = genText;
+                  }
+                }
+              }
+            } catch (geminiError) {
+              console.warn("Gemini Customization issue, using standard template.");
+            }
+          }
+
+          if (targetChannel === 'WhatsApp') {
+            console.log(`[Queue Runner] Processing WhatsApp Dispatch Log #${whatsappLog.log_id}`);
+            await runWhatsAppDispatch(whatsappLog.log_id, finalPhone, finalMessageContent, finalGuestName, resolvedBookingId);
+            
+            console.log(`[Queue Runner] Transitioning to Email Log #${emailLog.log_id}`);
+            await runEmailDispatch(emailLog.log_id, finalRecipientEmail, finalMessageContent);
+          } else {
+            console.log(`[Queue Runner] Processing Email Dispatch Log #${emailLog.log_id}`);
+            await runEmailDispatch(emailLog.log_id, finalRecipientEmail, finalMessageContent);
+            
+            console.log(`[Queue Runner] Transitioning to WhatsApp Log #${whatsappLog.log_id}`);
+            await runWhatsAppDispatch(whatsappLog.log_id, finalPhone, finalMessageContent, finalGuestName, resolvedBookingId);
+          }
           console.log(`[Queue Runner] Independent delivery loop completed safely.`);
-        }, 50);
-
-        const updatedLogs = await dbOps.getCommunicationLogs();
-        const updatedLog = updatedLogs.find(l => l.log_id === whatsappLog.log_id) || whatsappLog;
-
-        if (wsSucceeded) {
-          return res.json({ success: true, log: updatedLog });
-        } else {
-          return res.status(400).json({ 
-            success: false, 
-            error: updatedLog.failure_reason || "WhatsApp delivery failed.",
-            error_message: updatedLog.failure_reason || "WhatsApp delivery failed.",
-            reason: updatedLog.failure_reason || "WhatsApp delivery failed.",
-            log: updatedLog 
-          });
+        } catch (e) {
+          console.error("Background dispatch execution error:", e);
         }
-      } else {
-        // channel === 'Email'
-        console.log(`[Queue Runner] Processing Email Dispatch Log #${emailLog.log_id}`);
-        const emailSucceeded = await runEmailDispatch(emailLog.log_id, finalRecipientEmail, finalMessageContent);
+      }, 0);
 
-        // Run WhatsApp asynchronously in the background
-        setTimeout(async () => {
-          console.log(`[Queue Runner] Transitioning to WhatsApp Log #${whatsappLog.log_id}`);
-          await runWhatsAppDispatch(whatsappLog.log_id, finalPhone, finalMessageContent, finalGuestName, resolvedBookingId);
-          console.log(`[Queue Runner] Independent delivery loop completed safely.`);
-        }, 50);
-
-        const updatedLogs = await dbOps.getCommunicationLogs();
-        const updatedLog = updatedLogs.find(l => l.log_id === emailLog.log_id) || emailLog;
-
-        if (emailSucceeded) {
-          return res.json({ success: true, log: updatedLog });
-        } else {
-          return res.status(400).json({ 
-            success: false, 
-            error: updatedLog.failure_reason || "Email delivery failed.",
-            error_message: updatedLog.failure_reason || "Email delivery failed.",
-            reason: updatedLog.failure_reason || "Email delivery failed.",
-            log: updatedLog 
-          });
-        }
-      }
+      // Return the primary log immediately to the client
+      const primaryLog = targetChannel === 'Email' ? emailLog : whatsappLog;
+      return res.json({ 
+        success: true, 
+        log: { 
+          ...primaryLog, 
+          status_info: '🟡 Pending Delivery' 
+        } 
+      });
     }
 
   } catch (err: any) {

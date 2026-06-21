@@ -31,6 +31,23 @@ const AccountsDashboard = React.lazy(() => import('./components/AccountsDashboar
 const MessagingReportingDashboard = React.lazy(() => import('./components/MessagingReportingDashboard').then(m => ({ default: m.MessagingReportingDashboard })));
 const RoomDetailsPage = React.lazy(() => import('./components/RoomDetailsPage').then(m => ({ default: m.RoomDetailsPage })));
 
+const getLocalDateString = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const getTodayAndTomorrow = () => {
+  const today = new Date();
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  return {
+    todayStr: getLocalDateString(today),
+    tomorrowStr: getLocalDateString(tomorrow)
+  };
+};
+
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('theme');
@@ -63,8 +80,41 @@ export default function App() {
   const [dashboardTab, setDashboardTab] = useState<'operations' | 'messaging'>('operations');
 
   // Stays checking search filters
-  const [checkInDate, setCheckInDate] = useState('2026-06-10');
-  const [checkOutDate, setCheckOutDate] = useState('2026-06-12');
+  const [checkInDate, setCheckInDate] = useState(() => {
+    const { todayStr } = getTodayAndTomorrow();
+    return todayStr;
+  });
+  const [checkOutDate, setCheckOutDate] = useState(() => {
+    const { tomorrowStr } = getTodayAndTomorrow();
+    return tomorrowStr;
+  });
+
+  const currentDateRef = React.useRef(getLocalDateString(new Date()));
+
+  useEffect(() => {
+    if (loggedInGuest) {
+      const { todayStr, tomorrowStr } = getTodayAndTomorrow();
+      setCheckInDate(todayStr);
+      setCheckOutDate(tomorrowStr);
+      currentDateRef.current = todayStr;
+    }
+  }, [loggedInGuest]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const todayStr = getLocalDateString(new Date());
+      if (todayStr !== currentDateRef.current) {
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrowStr = getLocalDateString(tomorrow);
+        
+        setCheckInDate(todayStr);
+        setCheckOutDate(tomorrowStr);
+        currentDateRef.current = todayStr;
+      }
+    }, 10000);
+    return () => clearInterval(interval);
+  }, []);
   const [guestsCount, setGuestsCount] = useState<number>(2);
   const [searchType, setSearchType] = useState<string>('All');
 
@@ -209,7 +259,7 @@ export default function App() {
       />
 
       {/* Main Core Viewport */}
-      <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" id="main_viewport_content">
+      <main className="flex-1 w-full max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-8" id="main_viewport_content">
         <React.Suspense fallback={
           <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4">
             <div className="flex space-x-2">
@@ -845,7 +895,11 @@ export default function App() {
                   </p>
                 </div>
 
+              {/* Width breakout: cancels parent px-4/px-6/px-8 padding so the
+                  Stay Ledger table has more horizontal breathing room. */}
+              <div className="-mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8">
                 <HousekeepingDashboard />
+              </div>
               </motion.div>
             )}
 
@@ -924,6 +978,7 @@ export default function App() {
             checkOutDate={checkOutDate}
             onClose={() => setSelectedRoomToBook(null)}
             onBookingSuccess={handleBookingComplete}
+            loggedInGuest={loggedInGuest}
           />
         </React.Suspense>
       )}

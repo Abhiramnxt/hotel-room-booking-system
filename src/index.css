@@ -38,6 +38,8 @@
   font-size: 8px !important;
 }
 
+
+
 [class~="text-[8px]"],
 [class*=" text-[8px]"],
 [class*="text-[8px] "] {
@@ -686,16 +688,16 @@ body.dark {
   border-collapse: collapse;
 }
 
-/* Column width allocation (totals must = 100%) */
-.gs-col-id       { width: 7%; }
-.gs-col-room     { width: 7%; }
-.gs-col-guest    { width: 11%; }
-.gs-col-type     { width: 14%; }
-.gs-col-details  { width: 20%; }
-.gs-col-time     { width: 10%; }
-.gs-col-priority { width: 8%; }
-.gs-col-status   { width: 10%; }
-.gs-col-actions  { width: 13%; }
+/* Column width allocation (totals = 100%) */
+.gs-col-id       { width: 6%; }
+.gs-col-room     { width: 8%; }
+.gs-col-guest    { width: 13%; }
+.gs-col-type     { width: 13%; }
+.gs-col-details  { width: 23%; }
+.gs-col-time     { width: 9%; }
+.gs-col-priority { width: 7%; }
+.gs-col-status   { width: 9%; }
+.gs-col-actions  { width: 12%; }
 
 /* Details cell — allow text to wrap across multiple lines */
 .gs-cell-details {
@@ -713,4 +715,43 @@ body.dark {
 /* Dark mode overrides for the new table containers */
 .dark .gs-table-scroll-wrapper {
   background-color: #111827;
+}
+
+/* Custom fade-in-up animations for toast notifications and dropdown selectors */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* ==========================================================================
+   GUEST SERVICES TABLE — ADAPTIVE TEXT COLOURS
+   Light mode: pure black.  Dark mode: white / light-slate.
+   These classes replace inline style={{ color: '#000000' }} which cannot
+   be overridden by Tailwind dark: variants.
+   ========================================================================== */
+
+/* Primary text — Guest Name, Room Number */
+.gs-text-primary {
+  color: #000000;
+}
+.dark .gs-text-primary {
+  color: #ffffff !important;
+}
+
+/* Secondary text — Room Type, Details body */
+.gs-text-secondary {
+  color: #000000;
+}
+.dark .gs-text-secondary {
+  color: #e2e8f0 !important; /* slate-200 */
 }
