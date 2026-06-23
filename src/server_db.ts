@@ -98,6 +98,28 @@ export async function initDB() {
 
     await addColumnIfNotExist('complaints', 'assigned_staff', 'VARCHAR(255) DEFAULT NULL');
     await addColumnIfNotExist('room_service_requests', 'assigned_staff', 'VARCHAR(255) DEFAULT NULL');
+
+    // Migrate hashed passwords in database to plaintext temporary passwords
+    try {
+      const accounts = await query('SELECT account_id, username, password_hash FROM guest_accounts');
+      const hashedAccounts = accounts.filter((acc: any) => 
+        acc.password_hash && /^[a-f0-9]{64}$/i.test(acc.password_hash)
+      );
+      if (hashedAccounts.length > 0) {
+        console.log(`[Database Migration] Found ${hashedAccounts.length} guest accounts with SHA-256 hashed passwords. Migrating to plaintext temporary passwords...`);
+        for (const acc of hashedAccounts) {
+          const rawPass = `Temp@${Math.floor(100 + Math.random() * 900)}`;
+          await execute(
+            'UPDATE guest_accounts SET password_hash = ?, first_login_password_changed = 0 WHERE account_id = ?',
+            [rawPass, acc.account_id]
+          );
+          console.log(`[Database Migration] Migrated account ${acc.username} (ID: ${acc.account_id}) to temporary plaintext password: ${rawPass}`);
+        }
+        console.log('[Database Migration] Migration successfully completed.');
+      }
+    } catch (migErr) {
+      console.error('[Database Migration] Error running password migration:', migErr);
+    }
   } catch (err) {
     console.error('[Database] Failed to initialize MySQL pool or update schema:', err);
   }
@@ -220,9 +242,22 @@ export const dbOps = {
   },
 
   getLatestBookingForEmail: (email: string) => {
-    const sql = `SELECT * FROM bookings WHERE LOWER(guest_email) = LOWER('${email}') ORDER BY booking_id DESC LIMIT 1;`;
-    return executeQueryAsync(sql, ['bookings'], async () => {
-      const rows = await query('SELECT * FROM bookings WHERE LOWER(guest_email) = LOWER(?) ORDER BY booking_id DESC LIMIT 1', [email]);
+    const sql = `
+      SELECT b.*, g.email AS guest_email 
+      FROM bookings b
+      LEFT JOIN guests g ON b.guest_id = g.guest_id
+      WHERE LOWER(g.email) = LOWER('${email}')
+      ORDER BY b.booking_id DESC LIMIT 1;
+    `;
+    return executeQueryAsync(sql, ['bookings', 'guests'], async () => {
+      const rows = await query(
+        `SELECT b.*, g.email AS guest_email 
+         FROM bookings b
+         LEFT JOIN guests g ON b.guest_id = g.guest_id
+         WHERE LOWER(g.email) = LOWER(?)
+         ORDER BY b.booking_id DESC LIMIT 1`, 
+        [email]
+      );
       return rows[0] || null;
     });
   },
@@ -871,9 +906,9 @@ export const dbOps = {
           const guest_id_str = `SNP2026${String(nextNum).padStart(3, '0')}`;
           const username     = `guest_snp${String(nextNum).padStart(3, '0')}`;
           const raw_password = `Temp@${Math.floor(100 + Math.random() * 900)}`;
-          const password_hash = crypto.createHash('sha256').update(raw_password).digest('hex');
+          const password_hash = raw_password; // Plaintext password directly stored in database
 
-          console.log('[Diagnostics DB] ✅ INSERTING — guest_id_str:', guest_id_str, '| username:', username, '| password_hash (SHA-256):', password_hash);
+          console.log('[Diagnostics DB] ✅ INSERTING — guest_id_str:', guest_id_str, '| username:', username, '| password_hash (plaintext):', password_hash);
 
           const [insertResult] = await conn.execute(
             'INSERT INTO guest_accounts (guest_id_str, username, password_hash, full_name, mobile_number, email, stay_duration, is_activated, first_login_password_changed) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0)',
@@ -1027,22 +1062,18 @@ export const dbOps = {
   },
 
   updateGuestAccountPassword: (usernameOrGuestId: string, newPass: string, firstLoginPasswordChanged: number = 1) => {
-    let passHash = newPass;
-    if (!/^[a-f0-9]{64}$/i.test(newPass)) {
-      passHash = crypto.createHash('sha256').update(newPass).digest('hex');
-    }
-    const sql = `UPDATE guest_accounts SET password_hash = '${passHash}', first_login_password_changed = ${firstLoginPasswordChanged} WHERE username = '${usernameOrGuestId}' OR guest_id_str = '${usernameOrGuestId}';`;
+    const sql = `UPDATE guest_accounts SET password_hash = '${newPass}', first_login_password_changed = ${firstLoginPasswordChanged} WHERE username = '${usernameOrGuestId}' OR guest_id_str = '${usernameOrGuestId}';`;
     return executeQueryAsync(sql, ['guest_accounts'], async () => {
       await execute(
         'UPDATE guest_accounts SET password_hash = ?, first_login_password_changed = ? WHERE username = ? OR guest_id_str = ?',
-        [passHash, firstLoginPasswordChanged, usernameOrGuestId, usernameOrGuestId]
+        [newPass, firstLoginPasswordChanged, usernameOrGuestId, usernameOrGuestId]
       );
       const accounts = await query('SELECT * FROM guest_accounts WHERE username = ? OR guest_id_str = ?', [usernameOrGuestId, usernameOrGuestId]);
       if (accounts.length === 0) throw new Error("Credentials reference not encountered in secure Relational index.");
       const acc = accounts[0];
       return {
         ...acc,
-        password_hash: newPass, // Return original input password in returned object for UI/dispatch purposes
+        password_hash: newPass,
         is_activated: !!acc.is_activated,
         first_login_password_changed: !!acc.first_login_password_changed
       };

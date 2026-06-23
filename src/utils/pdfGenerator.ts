@@ -30,7 +30,7 @@ export function generatePdfReport(
     format: 'a4',
   });
 
-  const generatedBy = options?.generatedBy || "Abhiram Thunikipati";
+  const generatedBy = options?.generatedBy || "Sai Nirvana Plaza Management System";
   const now = new Date();
   const generatedDate = now.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium' });
   const generatedTime = now.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', timeStyle: 'short' });
@@ -116,18 +116,18 @@ export function generatePdfReport(
       const bookList = state?.bookings || [];
       rows = bookList.map((b: any) => [
         `BK-${b.booking_id}`,
-        b.guest_name || "Valued Premium Guest",
-        b.room_number ? `Room ${b.room_number}` : 'Cabin 101',
-        `${b.check_in_date} to ${b.check_out_date}`,
-        b.booking_source || "Web Booking",
-        b.booking_status || "Active",
-        `Rs. ${(b.price_per_night || 3500).toLocaleString('en-IN')}`
+        b.guest_name || "N/A",
+        b.room_number ? `Room ${b.room_number}` : 'N/A',
+        `${b.check_in_date || 'N/A'} to ${b.check_out_date || 'N/A'}`,
+        b.booking_source || "N/A",
+        b.booking_status || "N/A",
+        b.price_per_night ? `Rs. ${Number(b.price_per_night).toLocaleString('en-IN')}` : 'N/A'
       ]);
       
       if (rows.length === 0) {
-        rows.push(["N/A", "No bookings found in database state.", "", "", "", ""]);
+        rows.push(["—", "No Records Available", "—", "—", "—", "—", "—"]);
       }
-      const sumTotal = bookList.reduce((acc: number, b: any) => acc + (b.price_per_night || 3500), 0);
+      const sumTotal = bookList.reduce((acc: number, b: any) => acc + Number(b.price_per_night || 0), 0);
       summaryText = `Stays Audited: ${bookList.length} | Total Tariff Value: Rs. ${sumTotal.toLocaleString('en-IN')}`;
       break;
     }
@@ -135,33 +135,45 @@ export function generatePdfReport(
     case 'gst':
     case 'invoice': {
       title = "GST Tax Invoice (GSTR-2 Compliant)";
-      description = "Itemized service billing receipt displaying CGST/SGST tax liabilities computed at the 18% luxury accommodation bracket.";
-      headers = ["Tax Ref Hash", "Guest Client", "Room Unit", "Timeline Duration", "Room Charges (Rs)", "GST (18% Slab)", "Total Fare (Rs)"];
+      description = "Itemized service billing receipt displaying CGST/SGST tax liabilities from actual Railway MySQL payment records.";
+      headers = ["Tax Ref Hash", "Guest Client", "Room Unit", "Timeline Duration", "Nights", "Base Charges (Rs)", "GST (Rs)", "Total Fare (Rs)"];
       
       const bookList = state?.bookings || [];
+      const paymentList = state?.payments || [];
       rows = bookList.map((b: any) => {
-        const cost = b.price_per_night || 3500;
-        const gstVal = Math.round(cost * 0.18);
-        const finalCost = cost + gstVal;
+        // Find actual payment for this booking
+        const matchedPayment = paymentList.find((p: any) => p.booking_id === b.booking_id);
+        // Calculate real nights
+        let nights = 1;
+        if (b.check_in_date && b.check_out_date) {
+          const cin = new Date(b.check_in_date);
+          const cout = new Date(b.check_out_date);
+          const diff = Math.round((cout.getTime() - cin.getTime()) / (1000 * 60 * 60 * 24));
+          if (diff > 0) nights = diff;
+        }
+        const baseAmt = matchedPayment ? (Number(matchedPayment.amount) - Number(matchedPayment.gst_amount || 0)) : (Number(b.price_per_night || 0) * nights);
+        const gstVal = matchedPayment ? Number(matchedPayment.gst_amount || 0) : Math.round(baseAmt * 0.18);
+        const finalCost = baseAmt + gstVal;
         return [
           `TAX-SN-${b.booking_id}11`,
           b.guest_name || "Self Entrant",
-          b.room_number ? `Room ${b.room_number}` : "Room 101",
-          `${b.check_in_date} to ${b.check_out_date}`,
-          cost.toLocaleString('en-IN'),
+          b.room_number ? `Room ${b.room_number}` : "N/A",
+          `${b.check_in_date || 'N/A'} to ${b.check_out_date || 'N/A'}`,
+          `${nights} Night${nights !== 1 ? 's' : ''}`,
+          baseAmt.toLocaleString('en-IN'),
           gstVal.toLocaleString('en-IN'),
           finalCost.toLocaleString('en-IN')
         ];
       });
 
       if (rows.length === 0) {
-        rows.push(["N/A", "No invoiced bookings found to compile tax records.", "", "", "", ""]);
+        rows.push(["N/A", "No invoiced bookings found to compile tax records.", "", "", "", "", "", ""]);
       }
       
-      const totalCost = bookList.reduce((acc: number, b: any) => acc + (b.price_per_night || 3500), 0);
-      const totalGst = Math.round(totalCost * 0.18);
-      const grandTotal = totalCost + totalGst;
-      summaryText = `Net Base Charges: Rs. ${totalCost.toLocaleString('en-IN')} | Total Multi-Slab GST: Rs. ${totalGst.toLocaleString('en-IN')} | Inv Total: Rs. ${grandTotal.toLocaleString('en-IN')}`;
+      const totalBase = rows.filter(r => r[0] !== 'N/A').reduce((acc: number, r: any) => acc + (parseFloat(String(r[5]).replace(/,/g,'')) || 0), 0);
+      const totalGst = rows.filter(r => r[0] !== 'N/A').reduce((acc: number, r: any) => acc + (parseFloat(String(r[6]).replace(/,/g,'')) || 0), 0);
+      const grandTotal = totalBase + totalGst;
+      summaryText = `Net Base Charges: Rs. ${totalBase.toLocaleString('en-IN')} | Total GST: Rs. ${totalGst.toLocaleString('en-IN')} | Grand Total: Rs. ${grandTotal.toLocaleString('en-IN')}`;
       break;
     }
 
@@ -171,156 +183,193 @@ export function generatePdfReport(
       description = "Discharged invoice log for fully settled reservations. Certified for corporate billing clearance.";
       headers = ["Financial Component", "Audited Stay Specifications"];
       
-      const b = options?.customBooking || (state?.bookings && state.bookings[0]) || {
-        booking_id: 104,
-        guest_name: "Abhiram Thunikipati",
-        room_number: "201",
-        room_type: "Premium Deluxe",
-        check_in_date: "2026-06-01",
-        check_out_date: "2026-06-05",
-        price_per_night: 3500,
-        booking_status: "Checked-Out"
-      };
+      const b = options?.customBooking || (state?.bookings && state.bookings[0]);
+      const pay = options?.customPayment || (state?.payments && state.payments.find((p: any) => p.booking_id === b?.booking_id));
       
-      const pay = options?.customPayment || (state?.payments && state.payments.find((p: any) => p.booking_id === b.booking_id)) || {
-        payment_method: "UPI / NetBanking",
-        transaction_reference: "TXN_RBI_9921D38"
-      };
+      if (!b) {
+        rows = [["Notice", "No booking record provided for receipt generation."]];
+        summaryText = "No receipt data available.";
+        break;
+      }
 
-      const daysNum = 4;
-      const baseTariff = (b.price_per_night || 3500) * daysNum;
-      const gstAmt = Math.round(baseTariff * 0.18);
-      const finalAmt = baseTariff + gstAmt;
+      // Calculate real nights from actual check-in/out dates
+      let daysNum = 1;
+      if (b.check_in_date && b.check_out_date) {
+        const cin = new Date(b.check_in_date);
+        const cout = new Date(b.check_out_date);
+        const diff = Math.round((cout.getTime() - cin.getTime()) / (1000 * 60 * 60 * 24));
+        if (diff > 0) daysNum = diff;
+      }
+
+      // Use real payment amount if available, otherwise calculate
+      let baseTariff: number;
+      let gstAmt: number;
+      let finalAmt: number;
+      
+      if (pay && pay.amount) {
+        finalAmt = Number(pay.amount);
+        gstAmt = Number(pay.gst_amount || 0);
+        baseTariff = finalAmt - gstAmt;
+      } else {
+        baseTariff = Number(b.price_per_night || 0) * daysNum;
+        gstAmt = Math.round(baseTariff * 0.18);
+        finalAmt = baseTariff + gstAmt;
+      }
 
       rows = [
         ["Invoice Number", `INV-2026-${String(b.booking_id).padStart(3, '0')}`],
-        ["Guest Customer", b.guest_name || "Loyal VIP Patron"],
-        ["Assigned Unit", `Room ${b.room_number || '101'} - ${b.room_type || 'Premium Deluxe'}`],
-        ["Stay Period", `${b.check_in_date} to ${b.check_out_date} (${daysNum} Nights Duration)`],
-        ["Base Accomodation Tariff", `Rs. ${baseTariff.toLocaleString('en-IN')}.00`],
-        ["CGST (9.0%)", `Rs. ${(gstAmt / 2).toLocaleString('en-IN')}.00`],
-        ["SGST (9.0%)", `Rs. ${(gstAmt / 2).toLocaleString('en-IN')}.00`],
-        ["Payment Method", pay.payment_method || "UPI Transfer Network"],
-        ["Transaction Reference ID", pay.transaction_reference || "TXN8840294721"],
-        ["Settlement Status", "🟢 FULLY PAID & OUTSTANDING SETTLED"]
+        ["Guest Customer", b.guest_name || 'N/A'],
+        ["Assigned Unit", `Room ${b.room_number || 'N/A'} - ${b.room_type || 'N/A'}`],
+        ["Stay Period", `${b.check_in_date || 'N/A'} to ${b.check_out_date || 'N/A'} (${daysNum} Night${daysNum !== 1 ? 's' : ''})`],
+        ["Base Accommodation Tariff", `Rs. ${baseTariff.toLocaleString('en-IN')}.00`],
+        ["CGST (9.0%)", `Rs. ${Math.floor(gstAmt / 2).toLocaleString('en-IN')}.00`],
+        ["SGST (9.0%)", `Rs. ${Math.ceil(gstAmt / 2).toLocaleString('en-IN')}.00`],
+        ["Payment Method", pay?.payment_method || 'N/A'],
+        ["Transaction Reference ID", pay?.transaction_reference || 'N/A'],
+        ["Settlement Status", pay?.payment_status === 'Paid' ? '🟢 FULLY PAID & SETTLED' : pay?.payment_status === 'Refunded' ? '🔴 REFUNDED' : '🟡 PENDING PAYMENT']
       ];
 
-      summaryText = `Final Discharged Amount: Rs. ${finalAmt.toLocaleString('en-IN')}.00`;
+      summaryText = `Final Discharged Amount: Rs. ${finalAmt.toLocaleString('en-IN')}.00 | Duration: ${daysNum} Night${daysNum !== 1 ? 's' : ''}`;
       break;
     }
 
     case 'history': {
       title = "Guest Stay History & Feedback Registry";
-      description = "Aggregated records of historical reservations, accommodation frequencies, feedback, and customer satisfaction index.";
-      headers = ["ID", "Guest Client", "Previous Booking Unit", "Stays Dates Interval", "Total INR Paid", "Audit Rating Feedback"];
+      description = "Aggregated records of historical reservations, real accommodation costs, feedback, and customer satisfaction index from Railway MySQL.";
+      headers = ["ID", "Guest Client", "Previous Booking Unit", "Stay Dates Interval", "Nights", "Total INR Paid", "Audit Rating Feedback"];
       
       const bookList = state?.bookings || [];
       const feedbackList = state?.feedback || [];
+      const paymentList = state?.payments || [];
       
       rows = bookList.map((b: any) => {
-        const guestFeedback = feedbackList.find((f: any) => String(f.guest_name) === String(b.guest_name)) || {
-          rating: 5,
-          comments: "Exemplary luxurious hospitality."
-        };
-        const totalPaid = (b.price_per_night || 3500) * 4;
+        const guestFeedback = feedbackList.find((f: any) => String(f.guest_id) === String(b.guest_id) || String(f.guest_name) === String(b.guest_name));
+        // Calculate real nights from actual dates
+        let nights = 1;
+        if (b.check_in_date && b.check_out_date) {
+          const cin = new Date(b.check_in_date);
+          const cout = new Date(b.check_out_date);
+          const diff = Math.round((cout.getTime() - cin.getTime()) / (1000 * 60 * 60 * 24));
+          if (diff > 0) nights = diff;
+        }
+        // Use real payment amount if available
+        const matchedPayment = paymentList.find((p: any) => p.booking_id === b.booking_id);
+        const totalPaid = matchedPayment ? Number(matchedPayment.amount || 0) : (Number(b.price_per_night || 0) * nights);
+        const ratingStr = guestFeedback ? `★ ${guestFeedback.rating} / ${String(guestFeedback.comments || '').substring(0, 22)}...` : 'No feedback yet';
         return [
           `BK-${b.booking_id}`,
           b.guest_name || "Premium Lodger",
-          b.room_number ? `Room ${b.room_number}` : "Room 101",
-          `${b.check_in_date} to ${b.check_out_date}`,
+          b.room_number ? `Room ${b.room_number}` : "N/A",
+          `${b.check_in_date || 'N/A'} to ${b.check_out_date || 'N/A'}`,
+          `${nights} Night${nights !== 1 ? 's' : ''}`,
           `Rs. ${totalPaid.toLocaleString('en-IN')}`,
-          `★ ${guestFeedback.rating}.0 / ${guestFeedback.comments.substring(0,25)}...`
+          ratingStr
         ];
       });
 
       if (rows.length === 0) {
-        rows.push(["N/A", "No historical gueststays records found.", "", "", "", ""]);
+        rows.push(["N/A", "No stay records found in the database.", "", "", "", "", ""]);
       }
-      summaryText = `Consolidated Stays Indexed: ${rows.length} checked-out profiles`;
+      summaryText = `Total Stays Indexed: ${rows.length} | Feedback Received: ${feedbackList.length}`;
       break;
     }
 
     case 'revenue': {
       title = "Revenue Audit & Balance Ledger Sheet";
-      description = "Comprehensive income ledger summarizing chamber bookings, business conference spaces, MICE banquets, and dining tallies.";
-      headers = ["Income Category Center", "Quarterly Operations Target", "Net Direct Revenue", "Commission & Processing Taxes", "Total Gross Earnings"];
+      description = "Live payment transactions from Railway MySQL — actual booking revenue, GST collected, payment methods, and transaction references.";
+      headers = ["Payment ID", "Guest Name", "Room", "Stay Duration", "Base Amount (Rs)", "GST (Rs)", "Total Paid (Rs)", "Method", "Status"];
       
-      const bookList = state?.bookings || [];
-      const totalTariffBookings = bookList.reduce((acc: number, b: any) => acc + (b.price_per_night || 3500) * 4, 0) || 450000;
-
-      rows = [
-        ["Accommodations (Standard & Executive Chambers)", "Rs. 8,00,000", `Rs. ${totalTariffBookings.toLocaleString('en-IN')}`, "Rs. 0 (Direct)", `Rs. ${totalTariffBookings.toLocaleString('en-IN')}`],
-        ["MICE Banquet Halls & Executive Lounges Lease", "Rs. 3,50,000", "Rs. 2,40,000", "Rs. 3,600 (UPI)", "Rs. 2,36,400"],
-        ["Room Service Fine Dining & Beverage Service", "Rs. 1,50,000", "Rs. 1,18,000", "Rs. 0", "Rs. 1,18,000"],
-        ["Aroma Spa Therapy & Wellness Recreations", "Rs. 1,00,000", "Rs. 85,000", "Rs. 0", "Rs. 85,000"]
-      ];
-
-      const sumTotalRevenue = totalTariffBookings + 236400 + 118000 + 85000;
-      summaryText = `Overall Audited Operating Gross: Rs. ${sumTotalRevenue.toLocaleString('en-IN')}`;
+      const payList = state?.payments || [];
+      rows = payList.map((p: any, idx: number) => {
+        const baseAmount = Number(p.amount || 0) - Number(p.gst_amount || 0);
+        let daysNum = 1;
+        if (p.check_in_date && p.check_out_date) {
+          const cin = new Date(p.check_in_date);
+          const cout = new Date(p.check_out_date);
+          const diff = Math.round((cout.getTime() - cin.getTime()) / (1000 * 60 * 60 * 24));
+          if (diff > 0) daysNum = diff;
+        }
+        return [
+          `PAY-${p.payment_id || (idx + 1)}`,
+          p.guest_name || 'N/A',
+          p.room_number ? `Room ${p.room_number}` : 'N/A',
+          p.check_in_date && p.check_out_date ? `${p.check_in_date} to ${p.check_out_date} (${p.nights || daysNum}N)` : 'N/A',
+          baseAmount.toLocaleString('en-IN'),
+          Number(p.gst_amount || 0).toLocaleString('en-IN'),
+          Number(p.amount || 0).toLocaleString('en-IN'),
+          p.payment_method || 'N/A',
+          p.payment_status === 'Paid' ? '🟢 Paid' : p.payment_status === 'Refunded' ? '🔴 Refunded' : '🟡 Pending'
+        ];
+      });
+      
+      if (rows.length === 0) {
+        rows.push(['N/A', 'No payment records found in the database.', '', '', '', '', '', '', '']);
+      }
+      
+      const totalRevenue = payList.filter((p: any) => p.payment_status === 'Paid').reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
+      const totalGst = payList.filter((p: any) => p.payment_status === 'Paid').reduce((s: number, p: any) => s + Number(p.gst_amount || 0), 0);
+      summaryText = `Total Revenue: Rs. ${totalRevenue.toLocaleString('en-IN')} | GST Collected: Rs. ${totalGst.toLocaleString('en-IN')} | Transactions: ${payList.length}`;
       break;
     }
 
     case 'occupancy': {
       title = "Chamber Occupancy & Live Inventory Index";
-      description = "Current room check-in logs, cleaning schedules, and occupancy rating statistics.";
-      headers = ["Room Number", "Room Class Pattern", "Live Status State", "Base Rent / Night", "Guest Services Agent"];
+      description = "Real-time room status from Railway MySQL — actual Available, Occupied, Dirty, and Maintenance counts from the rooms table.";
+      headers = ["Room Number", "Room Class Pattern", "Live Status State", "Base Rent / Night", "Fitted Amenities"];
       
-      // We can use rooms state if available, or fall back to standard list
       const roomsList = state?.rooms || [];
-      rows = roomsList.map((r: any) => [
-        `Room ${r.room_number}`,
-        r.room_type || "Standard Cabin",
-        r.room_status === 'Available' ? '🟢 Available' : r.room_status === 'Dirty' ? '🟡 Pending Clean' : '🔴 Occupied',
-        `Rs. ${r.price_per_night.toLocaleString('en-IN')}`,
-        r.cleaner_assigned || "Karan Singh"
-      ]);
+      rows = roomsList.map((r: any) => {
+        const amenities = Array.isArray(r.amenities) ? r.amenities.slice(0, 3).join(', ') : (r.amenities || 'Standard Amenities');
+        const statusLabel = r.room_status === 'Available' ? '🟢 Available'
+          : r.room_status === 'Occupied' ? '🔴 Occupied'
+          : r.room_status === 'Dirty' ? '🟡 Pending Clean'
+          : r.room_status === 'Maintenance' ? '🔵 Maintenance'
+          : (r.room_status || 'Unknown');
+        return [
+          `Room ${r.room_number}`,
+          r.room_type || 'Standard Room',
+          statusLabel,
+          `Rs. ${Number(r.price_per_night || 0).toLocaleString('en-IN')}`,
+          amenities
+        ];
+      });
 
       if (rows.length === 0) {
-        rows.push([
-          ["Room 101", "Standard Cabin", "🟢 Available", "Rs. 2,200", "Karan Singh"],
-          ["Room 102", "Standard Cabin", "🔴 Occupied", "Rs. 2,200", "Karan Singh"],
-          ["Room 201", "Premium Deluxe", "🟢 Available", "Rs. 3,500", "Amit Patel"],
-          ["Room 203", "Premium Deluxe", "🔴 Occupied", "Rs. 3,500", "Amit Patel"],
-          ["Room 301", "Executive Suite", "🟢 Available", "Rs. 6,500", "Rahul Sharma"],
-          ["Room 401", "Presidential Suite", "🟢 Available", "Rs. 12,000", "Amit Patel"]
-        ]);
+        rows.push(['N/A', 'No room records found in the database.', '', '', '']);
       }
 
-      const totalRooms = rows.length;
-      const occupied = rows.filter(r => r[2].includes('Occupied') || r[2].includes('🔴')).length;
-      const pct = totalRooms > 0 ? Math.round((occupied / totalRooms) * 100) : 33;
-      summaryText = `Total Chambers: ${totalRooms} | Active Occupancies: ${occupied} | Occupancy Index: ${pct}%`;
+      const totalRooms = roomsList.length;
+      const occupied = roomsList.filter((r: any) => r.room_status === 'Occupied').length;
+      const available = roomsList.filter((r: any) => r.room_status === 'Available').length;
+      const dirty = roomsList.filter((r: any) => r.room_status === 'Dirty').length;
+      const maintenance = roomsList.filter((r: any) => r.room_status === 'Maintenance').length;
+      const pct = totalRooms > 0 ? Math.round((occupied / totalRooms) * 100) : 0;
+      summaryText = `Total Chambers: ${totalRooms} | Occupied: ${occupied} | Available: ${available} | Dirty: ${dirty} | Maintenance: ${maintenance} | Occupancy: ${pct}%`;
       break;
     }
 
     case 'housekeeping': {
       title = "Guest Services Duties & Bedding Dispatch Queue";
-      description = "Current cleaning schedules, supervisor check-offs, and room turnaround tracking metrics.";
+      description = "Live housekeeping task queue from Railway MySQL — actual room assignments, staff, and turnaround statuses.";
       headers = ["Task Job ID", "Chamber No", "Room Class", "Staff Assigned", "Operational Clean Status", "Last Complete Log"];
       
       const hList = state?.housekeeping || [];
       rows = hList.map((t: any) => [
-        `JOB-00${t.task_id}`,
+        `JOB-${String(t.task_id).padStart(3, '0')}`,
         `Chamber ${t.room_number || 'N/A'}`,
-        t.room_type || "Standard Cabin",
-        "Karan Singh / Cleaner",
+        t.room_type || 'Standard Room',
+        t.assigned_staff || 'Unassigned',
         t.task_status === 'Completed' ? '🟢 Ready & Safe' : t.task_status === 'In Progress' ? '🔵 In Progress' : '🟡 Pending',
         t.completion_time ? new Date(t.completion_time).toLocaleTimeString() : 'Pending Discharge'
       ]);
 
       if (rows.length === 0) {
-        // Fallback housekeeping tasks
-        rows = [
-          ["JOB-001", "Chamber 101", "Standard Cabin", "Karan Singh", "🟢 Clean Complete", "11:20 AM"],
-          ["JOB-002", "Chamber 103", "Standard Cabin", "Karan Singh", "🟡 Room Dirty / Pending", "Pending Discharge"],
-          ["JOB-003", "Chamber 202", "Premium Deluxe", "Amit Patel", "🔵 Scrubbing / In Progress", "In Progress"],
-          ["JOB-004", "Chamber 302", "Executive Suite", "Rahul Sharma", "🟢 Clean Complete", "01:15 PM"]
-        ];
+        rows.push(['N/A', 'No housekeeping tasks found in the database.', '', '', '', '']);
       }
 
-      const completed = rows.filter(r => r[4].includes('Complete') || r[4].includes('🟢')).length;
-      const total = rows.length;
-      summaryText = `Tasks Scheduled: ${total} | Jobs Reconciled: ${completed} (Remaining tasks inside active queue)`;
+      const completed = hList.filter((t: any) => t.task_status === 'Completed').length;
+      const total = hList.length;
+      summaryText = `Tasks Scheduled: ${total} | Jobs Completed: ${completed} | Pending: ${total - completed}`;
       break;
     }
 
@@ -352,30 +401,56 @@ export function generatePdfReport(
     case 'communication':
     case 'comm': {
       title = "Automated Communication Transmission Report";
-      description = "Unified gateway delivery logs mapping Outbound messaging triggers, WhatsApp packets, and Mail deliverability tallies.";
-      headers = ["Activity Timestamp", "Guest Contact", "Transmission Type", "Gateway Channel", "Deliverability State"];
+      description = "Live outbound gateway delivery logs from Railway MySQL communication_history table — WhatsApp and Email delivery statuses.";
+      headers = ["Activity Timestamp", "Guest Name", "Recipient Contact", "Comm Type", "Gateway Channel", "Deliverability State"];
       
       const logsList = state?.commLogs || [];
       rows = logsList.map((l: any) => [
-        new Date(l.timestamp).toLocaleTimeString(),
-        l.recipient || "+91981248842",
-        l.event_type || "Booking Notice",
-        l.channel || "WhatsApp",
-        l.status_info || "🟢 Sent"
+        l.timestamp ? new Date(l.timestamp).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' }) : 'N/A',
+        l.guest_name || 'N/A',
+        l.recipient_email || l.guest_id_str || 'N/A',
+        l.communication_type || 'N/A',
+        l.channel || 'N/A',
+        l.status_info || '🟡 Unknown'
       ]);
 
       if (rows.length === 0) {
-        // Fallback telemetry records
-        rows = [
-          ["14:24:02 PM", "thunikipatiabhiram173@gmail.com", "Tax Billing Invoice Copy", "Email", "🟢 Dispatched Status Confirmed"],
-          ["14:25:11 PM", "+91 98124 88321", "Check-in Welcoming Card", "WhatsApp", "🟢 Received & Read (Meta)"],
-          ["15:10:45 PM", "+91 98124 88321", "Midnight Dining Check-off", "WhatsApp", "🟢 Received & Read (Meta)"],
-          ["15:45:00 PM", "unknown-email@service.com", "Manager Ledger Alert Check", "Email", "🔴 Failed - Mailbox Inactive"]
-        ];
+        rows.push(['N/A', 'N/A', 'No communication logs found in the database.', '', '', '']);
       }
 
-      const success = rows.filter(r => r[4].includes('Dispatched') || r[4].includes('Dispatched') || r[4].includes('🟢') || r[4].includes('Received')).length;
-      summaryText = `Overall Packets Dispatched: ${rows.length} | Successful Gateways: ${success} transmissions`;
+      const success = logsList.filter((l: any) => l.status_info && l.status_info.includes('🟢')).length;
+      const failed = logsList.filter((l: any) => l.status_info && l.status_info.includes('🔴')).length;
+      summaryText = `Total Logs: ${logsList.length} | Delivered: ${success} | Failed: ${failed} | WhatsApp: ${logsList.filter((l: any) => l.channel === 'WhatsApp').length} | Email: ${logsList.filter((l: any) => l.channel === 'Email').length}`;
+      break;
+    }
+
+    case 'corporate': {
+      title = "Corporate Bulk Bookings & MICE Business Audit";
+      description = "Exclusive business accounts audit — high-priority bulk reservation slots, liaison contacts, and booking confirmation status from Railway MySQL corporate_bookings table.";
+      headers = ["Reference ID", "Enterprise Entity", "Liaison Officer", "Contact Email", "Rooms Enquired", "Intended Dates", "Status"];
+
+      const corpList = state?.corporate || [];
+      rows = corpList.map((c: any) => [
+        `CORP-B-${c.corporate_booking_id}`,
+        c.company_name || 'N/A',
+        c.contact_person || 'N/A',
+        c.contact_email || 'N/A',
+        c.number_of_rooms ? `${c.number_of_rooms} Unit${Number(c.number_of_rooms) !== 1 ? 's' : ''}` : 'N/A',
+        c.booking_dates || 'N/A',
+        c.booking_status === 'Approved' ? '🟢 Approved'
+          : c.booking_status === 'Rejected' ? '🔴 Rejected'
+          : c.booking_status === 'Pending' ? '🟡 Pending Review'
+          : (c.booking_status || 'N/A')
+      ]);
+
+      if (rows.length === 0) {
+        rows.push(["—", "No Records Available", "—", "—", "—", "—", "—"]);
+      }
+
+      const approvedCount = corpList.filter((c: any) => c.booking_status === 'Approved').length;
+      const pendingCount = corpList.filter((c: any) => c.booking_status === 'Pending').length;
+      const totalRoomsReq = corpList.reduce((acc: number, c: any) => acc + Number(c.number_of_rooms || 0), 0);
+      summaryText = `Corporate Leads: ${corpList.length} | Approved: ${approvedCount} | Pending: ${pendingCount} | Total Rooms Requested: ${totalRoomsReq}`;
       break;
     }
 

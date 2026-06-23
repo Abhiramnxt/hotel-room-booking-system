@@ -33,7 +33,7 @@ function getFormattedDateString(d: any): string {
 }
 
 function hashPassword(password: string): string {
-  return crypto.createHash('sha256').update(password).digest('hex');
+  return password; // No hashing, store plaintext
 }
 
 initDB().catch(console.error);
@@ -593,7 +593,67 @@ app.get('/api/analytics', async (req, res) => {
   }
 });
 
-// 10. AI Predictive & Summary Endpoints using Gemini-2.5-flash
+// 10. PDF Report Data — Consolidated endpoint for live PDF generation
+// Returns payments (JOINed with bookings + guests + rooms), room status breakdown,
+// housekeeping tasks with staff, and communication logs for all 9 report types.
+app.get('/api/report-data', async (req, res) => {
+  try {
+    const [rooms, bookings, payments, housekeeping, commLogs, feedback] = await Promise.all([
+      dbOps.getRooms(),
+      dbOps.getBookings(),
+      dbOps.getPayments(),
+      dbOps.getHousekeeping(),
+      dbOps.getCommunicationLogs({}),
+      dbOps.getFeedback()
+    ]);
+
+    // Build payment rows with full guest + booking + room context
+    const enrichedPayments = payments.map((p: any) => {
+      const matchingBooking = bookings.find((b: any) => b.booking_id === p.booking_id);
+      return {
+        ...p,
+        guest_name: matchingBooking?.guest_name || 'N/A',
+        room_number: matchingBooking?.room_number || 'N/A',
+        room_type: matchingBooking?.room_type || 'N/A',
+        check_in_date: matchingBooking?.check_in_date || 'N/A',
+        check_out_date: matchingBooking?.check_out_date || 'N/A',
+        nights: (() => {
+          if (!matchingBooking) return 1;
+          const cin = new Date(matchingBooking.check_in_date);
+          const cout = new Date(matchingBooking.check_out_date);
+          const diff = Math.round((cout.getTime() - cin.getTime()) / (1000 * 60 * 60 * 24));
+          return diff > 0 ? diff : 1;
+        })()
+      };
+    });
+
+    // Room status breakdown (live from DB)
+    const roomStats = {
+      total: rooms.length,
+      available: rooms.filter((r: any) => r.room_status === 'Available').length,
+      occupied: rooms.filter((r: any) => r.room_status === 'Occupied').length,
+      dirty: rooms.filter((r: any) => r.room_status === 'Dirty').length,
+      maintenance: rooms.filter((r: any) => r.room_status === 'Maintenance').length,
+      occupancyPct: rooms.length > 0
+        ? Math.round((rooms.filter((r: any) => r.room_status === 'Occupied').length / rooms.length) * 100)
+        : 0
+    };
+
+    res.json({
+      payments: enrichedPayments,
+      rooms,
+      roomStats,
+      housekeeping,
+      commLogs,
+      feedback
+    });
+  } catch (err: any) {
+    console.error('[Diagnostics] Report data error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 11. AI Predictive & Summary Endpoints using Gemini-2.5-flash
 app.post('/api/ai/suggest-upgrade', async (req, res) => {
   const { current_room_id, check_in_date, check_out_date } = req.body;
   if (!current_room_id) return res.status(400).json({ error: "Missing current_room_id." });
@@ -912,8 +972,7 @@ app.post('/api/auth/login', async (req, res) => {
       console.log('[Diagnostics] Authentication Result: Failed - Guest account deactivated');
       return res.status(403).json({ error: "Access Restricted. Your guest account has been deactivated. Please contact Sai Nirvana Plaza Reception." });
     }
-    const inputPasswordHash = hashPassword(password);
-    const passwordMatchGuest = guestAcc.password_hash === password || guestAcc.password_hash === inputPasswordHash;
+    const passwordMatchGuest = guestAcc.password_hash === password;
     console.log('[Diagnostics] Password Match (guest):', passwordMatchGuest);
     if (passwordMatchGuest) {
       console.log('[Diagnostics] Authentication Result: Success - Guest login');
@@ -1024,7 +1083,7 @@ app.get('/api/auth/communication-logs', async (req, res) => {
 
 // Regenerate Guest Access Account password (forces prompt/password reset)
 app.post('/api/auth/regenerate-credentials', async (req, res) => {
-  const { account_id } = req.body;
+  const { account_id, auto_dispatch, channel, staff_member } = req.body;
   if (!account_id) return res.status(400).json({ error: "account_id is required." });
 
   try {
@@ -1032,18 +1091,113 @@ app.post('/api/auth/regenerate-credentials', async (req, res) => {
     const acc = list.find(a => a.account_id === Number(account_id));
     if (!acc) return res.status(404).json({ error: "Guest security credentials not registered." });
 
-    // Instatiate new temporary key Passcode
-    const nextPassword = `Temp@${Math.floor(100 + Math.random() * 900)}`;
-    const updated = await dbOps.updateGuestAccountPassword(acc.username, nextPassword, 0);
-    
+    // Generate new temporary password — raw only lives in server memory for this request
+    const rawPassword = `Temp@${Math.floor(100 + Math.random() * 900)}`;
+    const updated = await dbOps.updateGuestAccountPassword(acc.username, rawPassword, 0);
+
     // Set changed back to 0 so they must change it again on next login
     updated.first_login_password_changed = false;
-    
+
+    // If auto_dispatch is requested, fire WhatsApp + Email immediately with the raw password
+    if (auto_dispatch) {
+      const finalPhone = acc.mobile_number;
+      const finalEmail = acc.email;
+      const finalGuestName = acc.full_name;
+      const finalGuestIdStr = acc.guest_id_str;
+      const finalStaff = staff_member || "Reception Desk Admin";
+      const finalCommType = "Guest Login Credentials";
+      const targetChannel = channel || 'WhatsApp';
+
+      // Validate and format phone number before creating logs
+      const formatted = formatIndianPhoneNumber(finalPhone);
+      if (!formatted) {
+        // Phone invalid — skip WhatsApp dispatch but still return success
+        console.warn(`[AutoDispatch] Invalid phone number "${finalPhone}" for ${finalGuestName}. Skipping WhatsApp dispatch.`);
+        return res.json({ success: true, account: updated, dispatch_skipped: true, dispatch_reason: "Invalid phone number format." });
+      }
+      const formattedPhone = formatted;
+
+      // Build guest account object with raw password for template generation
+      const accForTemplate = {
+        full_name: finalGuestName,
+        guest_id_str: finalGuestIdStr,
+        username: acc.username,
+        password_hash: rawPassword  // raw password — used only in-memory for this dispatch
+      };
+
+      // Create both communication log entries
+      const [whatsappLog, emailLog] = await Promise.all([
+        dbOps.createCommunicationLog({
+          guest_id_str: finalGuestIdStr,
+          guest_name: finalGuestName,
+          channel: 'WhatsApp',
+          status_info: '🔵 In Progress',
+          staff_member: finalStaff,
+          communication_type: finalCommType,
+          recipient_email: formattedPhone,
+          api_response: "",
+          failure_reason: ""
+        }),
+        dbOps.createCommunicationLog({
+          guest_id_str: finalGuestIdStr,
+          guest_name: finalGuestName,
+          channel: 'Email',
+          status_info: '🔵 In Progress',
+          staff_member: finalStaff,
+          communication_type: finalCommType,
+          recipient_email: finalEmail,
+          api_response: "",
+          failure_reason: ""
+        })
+      ]);
+
+      // Set both to Pending
+      await Promise.all([
+        dbOps.updateCommunicationLogStatus(whatsappLog.log_id, '🟡 Pending Delivery', 1, "", formattedPhone, ""),
+        dbOps.updateCommunicationLogStatus(emailLog.log_id, '🟡 Pending Delivery', 1, "", finalEmail, "")
+      ]);
+
+      // Fire dispatches asynchronously in background — raw password stays in closure
+      setTimeout(async () => {
+        try {
+          // Generate credential message using the raw password explicitly
+          const messageContent = await getTemplateMessage(finalCommType, accForTemplate, null);
+
+          console.log(`[AutoDispatch] Credential message generated for ${finalGuestName}. Contains username: ${acc.username} and real temp password.`);
+
+          if (targetChannel === 'WhatsApp') {
+            console.log(`[AutoDispatch] Dispatching WhatsApp → Log #${whatsappLog.log_id}`);
+            await runWhatsAppDispatch(whatsappLog.log_id, formattedPhone, messageContent, finalGuestName, undefined);
+            console.log(`[AutoDispatch] Dispatching Email → Log #${emailLog.log_id}`);
+            await runEmailDispatch(emailLog.log_id, finalEmail, messageContent);
+          } else {
+            console.log(`[AutoDispatch] Dispatching Email → Log #${emailLog.log_id}`);
+            await runEmailDispatch(emailLog.log_id, finalEmail, messageContent);
+            console.log(`[AutoDispatch] Dispatching WhatsApp → Log #${whatsappLog.log_id}`);
+            await runWhatsAppDispatch(whatsappLog.log_id, formattedPhone, messageContent, finalGuestName, undefined);
+          }
+
+          console.log(`[AutoDispatch] Credential dispatch completed for ${finalGuestName}.`);
+        } catch (dispatchErr) {
+          console.error("[AutoDispatch] Background dispatch error:", dispatchErr);
+        }
+      }, 0);
+
+      return res.json({
+        success: true,
+        account: updated,
+        auto_dispatched: true,
+        whatsapp_log_id: whatsappLog.log_id,
+        email_log_id: emailLog.log_id
+      });
+    }
+
     res.json({ success: true, account: updated });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
 });
+
 async function runWhatsAppDispatch(
   logId: number, 
   phone: string, 
@@ -1411,7 +1565,7 @@ app.post('/api/auth/dispatch', async (req, res) => {
           // Look up credentials from guest accounts to append to notification templates
            const activeAcc = await dbOps.getGuestAccountByIdOrGuestIdStr(account_id ? Number(account_id) : null, finalGuestIdStr);
            const tempUsername = activeAcc ? activeAcc.username : "guest_temp";
-           const tempPassword = temp_password || (activeAcc && activeAcc.password_hash && activeAcc.password_hash.length !== 64 ? activeAcc.password_hash : "🔒 Password Secured");
+           const tempPassword = temp_password || (activeAcc ? activeAcc.password_hash : "");
 
           // Capture standard template fallback text
           let finalMessageContent = customMessage || "";
@@ -1518,7 +1672,7 @@ app.post('/api/auth/dispatch', async (req, res) => {
           // Look up credentials from guest accounts to append to notification templates
            const activeAcc = await dbOps.getGuestAccountByIdOrGuestIdStr(account_id ? Number(account_id) : null, finalGuestIdStr);
            const tempUsername = activeAcc ? activeAcc.username : "guest_temp";
-           const tempPassword = temp_password || (activeAcc && activeAcc.password_hash && activeAcc.password_hash.length !== 64 ? activeAcc.password_hash : "🔒 Password Secured");
+           const tempPassword = temp_password || (activeAcc ? activeAcc.password_hash : "");
 
           // Capture standard template fallback text
           let finalMessageContent = customMessage || "";

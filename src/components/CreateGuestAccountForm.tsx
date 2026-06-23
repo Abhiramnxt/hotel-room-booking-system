@@ -49,20 +49,16 @@ export function CreateGuestAccountForm({ currentRole = 'Front Desk Staff' }: Cre
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'All' | 'Active' | 'Blocked' | 'Pending'>('All');
   
-  // Live actions feed
-  const [dispatchingChannel, setDispatchingChannel] = useState<'WhatsApp' | 'Email' | null>(null);
+  // Live actions feed — independent loading states per button
+  const [whatsappLoading, setWhatsappLoading] = useState(false);
+  const [emailLoading, setEmailLoading] = useState(false);
+  const [regeneratingLoading, setRegeneratingLoading] = useState(false);
   const [copiedText, setCopiedText] = useState(false);
   const [successToast, setSuccessToast] = useState('');
   const [sessionPasswords, setSessionPasswords] = useState<Record<string, string>>({});
 
   const getPasswordToShow = (acc: any) => {
     if (!acc) return '';
-    if (sessionPasswords[acc.guest_id_str]) {
-      return sessionPasswords[acc.guest_id_str];
-    }
-    if (acc.password_hash && acc.password_hash.length === 64) {
-      return '🔒 Password Secured';
-    }
     return acc.password_hash || '';
   };
 
@@ -276,7 +272,8 @@ export function CreateGuestAccountForm({ currentRole = 'Front Desk Staff' }: Cre
 
   const handleDispatch = async (channel: 'WhatsApp' | 'Email', acc: any) => {
     playSound('dispatch');
-    setDispatchingChannel(channel);
+    if (channel === 'WhatsApp') setWhatsappLoading(true);
+    else setEmailLoading(true);
     try {
       const passToDispatch = getPasswordToShow(acc);
       const res = await fetch('/api/auth/dispatch', {
@@ -286,7 +283,7 @@ export function CreateGuestAccountForm({ currentRole = 'Front Desk Staff' }: Cre
           account_id: acc.account_id,
           channel,
           staff_member: "Reception Desk Admin",
-          temp_password: passToDispatch === '🔒 Password Secured' ? undefined : passToDispatch
+          temp_password: passToDispatch
         })
       });
 
@@ -301,18 +298,25 @@ export function CreateGuestAccountForm({ currentRole = 'Front Desk Staff' }: Cre
     } catch (err: any) {
       console.error(err);
     } finally {
-      setDispatchingChannel(null);
+      if (channel === 'WhatsApp') setWhatsappLoading(false);
+      else setEmailLoading(false);
     }
   };
 
   const handleRegenerate = async (acc: any) => {
-    if (!window.confirm(`Are you sure you want to regenerate security credentials for ${acc.full_name}? This will assign a fresh random password hash.`)) return;
+    if (!window.confirm(`Regenerate new security credentials for ${acc.full_name}?\n\nA new temporary password will be generated and immediately dispatched to the guest via WhatsApp and Email.\n\nThe previous password (if any) will be permanently invalidated.`)) return;
     playSound('confirm');
+    setRegeneratingLoading(true);
     try {
       const res = await fetch('/api/auth/regenerate-credentials', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ account_id: acc.account_id })
+        body: JSON.stringify({ 
+          account_id: acc.account_id,
+          auto_dispatch: true,
+          channel: 'WhatsApp',
+          staff_member: 'Reception Desk Admin'
+        })
       });
       if (res.ok) {
         playSound('success');
@@ -321,14 +325,26 @@ export function CreateGuestAccountForm({ currentRole = 'Front Desk Staff' }: Cre
           if (data.account && data.account.password_hash) {
             setSessionPasswords(prev => ({ ...prev, [data.account.guest_id_str]: data.account.password_hash }));
           }
-          fetchAccounts();
+          await fetchAccounts();
           setSelectedAccount(data.account);
-          setSuccessToast("Credentials regenerated safely!");
-          setTimeout(() => setSuccessToast(''), 4000);
+          
+          if (data.auto_dispatched) {
+            setSuccessToast("Credentials regenerated & dispatching via WhatsApp + Email...");
+            // Start polling immediately — dispatch is already running server-side
+            startLogsPolling(data.account.guest_id_str);
+            fetchLogs(data.account.guest_id_str);
+          } else if (data.dispatch_skipped) {
+            setSuccessToast(`Credentials regenerated. Note: ${data.dispatch_reason || 'Dispatch skipped.'}`);
+          } else {
+            setSuccessToast("Credentials regenerated successfully!");
+          }
+          setTimeout(() => setSuccessToast(''), 5000);
         }
       }
     } catch (err) {
       console.warn("Credentials regeneration error:", err);
+    } finally {
+      setRegeneratingLoading(false);
     }
   };
 
@@ -770,12 +786,7 @@ export function CreateGuestAccountForm({ currentRole = 'Front Desk Staff' }: Cre
                       <p className="flex justify-between"><span className="text-slate-400">Guest Access ID:</span> <strong className="text-[#F9D976]">{selectedAccount.guest_id_str}</strong></p>
                       <p className="flex justify-between"><span className="text-slate-400">Username/Login:</span> <strong className="text-[#F9D976]">{selectedAccount.username}</strong></p>
                       <p className="flex justify-between"><span className="text-slate-400">Temp Password:</span> <strong className="text-rose-300 bg-rose-500/15 border border-rose-500/25 px-1.5 py-0.5 rounded">{getPasswordToShow(selectedAccount)}</strong></p>
-                      {getPasswordToShow(selectedAccount) === '🔒 Password Secured' && (
-                        <p className="text-[9px] text-slate-400 mt-1 italic text-right leading-tight max-w-[250px] ml-auto">
-                          Original temporary password is no longer available because it has been securely encrypted.
-                        </p>
-                      )}
-                      <p className="flex justify-between"><span className="text-slate-400">Reset Status:</span> <strong className={selectedAccount.first_login_password_changed ? 'text-emerald-400' : 'text-amber-400'}>{selectedAccount.first_login_password_changed ? 'COMPLETED' : 'RESET REQUIRED'}</strong></p>
+                       <p className="flex justify-between"><span className="text-slate-400">Reset Status:</span> <strong className={selectedAccount.first_login_password_changed ? 'text-emerald-400' : 'text-amber-400'}>{selectedAccount.first_login_password_changed ? 'COMPLETED' : 'RESET REQUIRED'}</strong></p>
                       <p className="flex justify-between"><span className="text-slate-400">Active Access:</span> <strong className={selectedAccount.is_activated ? 'text-emerald-400' : 'text-rose-400'}>{selectedAccount.is_activated ? 'GRANTED' : 'BLOCKED/SUSPENDED'}</strong></p>
                     </div>
                   </div>
@@ -789,25 +800,45 @@ export function CreateGuestAccountForm({ currentRole = 'Front Desk Staff' }: Cre
                   </div>
                   
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
-                    {canCreate && (
-                      <button 
+                     {canCreate && (
+                       <button 
                         onClick={() => handleDispatch('WhatsApp', selectedAccount)}
-                        disabled={dispatchingChannel !== null}
-                        className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/35 p-3 rounded-xl transition-all flex flex-col items-center gap-1.5 cursor-pointer text-center group"
+                        disabled={whatsappLoading}
+                        title="Send credentials via WhatsApp"
+                        className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/35 p-3 rounded-xl transition-all flex flex-col items-center gap-1.5 cursor-pointer text-center group relative disabled:opacity-60 disabled:cursor-not-allowed"
                       >
-                        <Smartphone className="h-4.5 w-4.5 text-emerald-400 group-hover:scale-115 transition-transform" />
-                        <span className="text-[9px] font-extrabold uppercase">WhatsApp</span>
+                        {whatsappLoading ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin text-emerald-400" />
+                            <span className="text-[9px] font-extrabold uppercase">Sending...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Smartphone className="h-4 w-4 text-emerald-400 group-hover:scale-110 transition-transform" />
+                            <span className="text-[9px] font-extrabold uppercase">WhatsApp</span>
+                          </>
+                        )}
                       </button>
-                    )}
+                     )}
 
                     {canCreate && (
                       <button 
                         onClick={() => handleDispatch('Email', selectedAccount)}
-                        disabled={dispatchingChannel !== null}
-                        className="bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/35 p-3 rounded-xl transition-all flex flex-col items-center gap-1.5 cursor-pointer text-center group"
+                        disabled={emailLoading}
+                        title="Send credentials via Email"
+                        className="bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/35 p-3 rounded-xl transition-all flex flex-col items-center gap-1.5 cursor-pointer text-center group disabled:opacity-60 disabled:cursor-not-allowed"
                       >
-                        <Mail className="h-4.5 w-4.5 text-sky-400 group-hover:scale-115 transition-transform" />
-                        <span className="text-[9px] font-extrabold uppercase">Email Portal</span>
+                        {emailLoading ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin text-sky-400" />
+                            <span className="text-[9px] font-extrabold uppercase">Sending...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Mail className="h-4 w-4 text-sky-400 group-hover:scale-110 transition-transform" />
+                            <span className="text-[9px] font-extrabold uppercase">Email Portal</span>
+                          </>
+                        )}
                       </button>
                     )}
 
@@ -839,10 +870,20 @@ export function CreateGuestAccountForm({ currentRole = 'Front Desk Staff' }: Cre
                     {canCreate && (
                       <button 
                         onClick={() => handleRegenerate(selectedAccount)}
-                        className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/35 p-3 rounded-xl transition-all flex flex-col items-center gap-1.5 cursor-pointer text-center group font-bold"
+                        disabled={regeneratingLoading}
+                        className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/35 p-3 rounded-xl transition-all flex flex-col items-center gap-1.5 cursor-pointer text-center group font-bold disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        <RefreshCw className="h-4.5 w-4.5 text-rose-400 group-hover:rotate-180 transition-transform duration-500" />
-                        <span className="text-[9px] font-extrabold uppercase">Reset Keys</span>
+                        {regeneratingLoading ? (
+                          <>
+                            <Loader2 className="h-4.5 w-4.5 animate-spin text-rose-400" />
+                            <span className="text-[9px] font-extrabold uppercase">Regenerating...</span>
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw className="h-4.5 w-4.5 text-rose-400 group-hover:rotate-180 transition-transform duration-500" />
+                            <span className="text-[9px] font-extrabold uppercase">Reset Keys</span>
+                          </>
+                        )}
                       </button>
                     )}
                   </div>

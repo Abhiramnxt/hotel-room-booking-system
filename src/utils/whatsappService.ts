@@ -137,21 +137,8 @@ export async function sendWhatsAppMessage(
   // Meta API expects digits only (E.164 number without '+' prefix and spaces)
   const metaRecipientPhone = formattedPhone.replace(/\D/g, '');
 
-  // 2. Duplicate detection
-  const msgHash = getHash(message);
-  const cacheKey = `${metaRecipientPhone}:${msgHash}`;
-  if (duplicateCache.has(cacheKey)) {
-    console.warn(`[WhatsAppService] Duplicate message detected for ${formattedPhone}. Throttling dispatch.`);
-    return {
-      success: false,
-      failureReason: "Duplicate message delivery prevented.",
-      recipientPhone: formattedPhone
-    };
-  }
-
-  // Register in cache for 10 seconds to prevent double triggers
-  duplicateCache.add(cacheKey);
-  setTimeout(() => duplicateCache.delete(cacheKey), 10000);
+  // 2. Duplicate detection bypassed for manual resends
+  console.log(`[WhatsAppService] Dispatch request initiated for ${formattedPhone}.`);
 
   const payload = {
     messaging_product: "whatsapp",

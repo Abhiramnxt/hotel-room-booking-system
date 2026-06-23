@@ -91,22 +91,8 @@ export async function sendEmail(
     };
   }
 
-  // 2. Duplicate detection
-  const msgHash = getHash(message);
-  const cacheKey = `${recipientEmail}:${msgHash}`;
-  if (duplicateEmailCache.has(cacheKey)) {
-    const errorMsg = "Duplicate email delivery prevented.";
-    console.warn(`[NodemailerService] Throttling: ${errorMsg} for ${recipientEmail}.`);
-    return {
-      success: false,
-      failureReason: errorMsg,
-      recipientEmail
-    };
-  }
-
-  // Register in cache for 10 seconds to prevent double triggers
-  duplicateEmailCache.add(cacheKey);
-  setTimeout(() => duplicateEmailCache.delete(cacheKey), 10000);
+  // 2. Duplicate detection bypassed for manual resends
+  console.log(`[NodemailerService] Dispatch request initiated for ${recipientEmail}.`);
 
   // 3. Fallback simulation mode
   if (!config.isConfigured) {

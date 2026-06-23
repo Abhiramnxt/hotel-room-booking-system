@@ -32,6 +32,8 @@ export function MessagingReportingDashboard({ onBack, currentRole = 'Front Desk 
   const [accounts, setAccounts] = useState<any[]>([]);
   const [commLogs, setCommLogs] = useState<any[]>([]);
   const [rooms, setRooms] = useState<any[]>([]);
+  // Enriched payments from /api/report-data (includes guest_name, room_number, room_type, nights)
+  const [reportPayments, setReportPayments] = useState<any[]>([]);
 
   // State definitions for administrative test emails and retry functions
   const [testEmailStatus, setTestEmailStatus] = useState<'idle' | 'sending' | 'success' | 'failed'>('idle');
@@ -124,62 +126,45 @@ export function MessagingReportingDashboard({ onBack, currentRole = 'Front Desk 
           });
         }
       });
-      // Add standard mock guests back in if map is empty
-      if (uniqueGuestsMap.size === 0) {
-        uniqueGuestsMap.set(1, { guest_id: 1, full_name: "Rajesh Kumar", email: "rajesh@gmail.com", mobile_number: "+919812345678" });
-        uniqueGuestsMap.set(2, { guest_id: 2, full_name: "Priyanka Sharma", email: "priyanka@yahoo.com", mobile_number: "+919876543215" });
-      }
       setGuests(Array.from(uniqueGuestsMap.values()));
 
-      // Fetch dynamic analytics metrics for revenue and occupied structures
-      const analyticsRes = await fetch('/api/analytics');
-      if (analyticsRes.ok) {
-        const aData = await analyticsRes.json();
-        setPayments(aData.metrics?.totalRevenue ? [{ amount: aData.metrics.totalRevenue, gst: aData.metrics.gstCollected }] : []);
+      // Fetch live enriched payments (with guest + room context) for PDF reports
+      const reportDataRes = await fetch('/api/report-data');
+      if (reportDataRes.ok) {
+        const rData = await reportDataRes.json();
+        setReportPayments(rData.payments || []);
+        setPayments(rData.payments || []);
       }
 
-      // Compute statistics based on live communication_logs
-      if (loadedLogs.length > 0) {
-        const whatsappLogs = loadedLogs.filter((l: any) => l.channel === 'WhatsApp');
-        const whatsapp = whatsappLogs.filter((l: any) => l.status_info.includes('🟢')).length;
-        const whatsappFailed = whatsappLogs.filter((l: any) => l.status_info.includes('🔴')).length;
-        const whatsappSuccessRate = whatsappLogs.length > 0 ? Math.round(((whatsappLogs.length - whatsappFailed) / whatsappLogs.length) * 100) : 100;
+      // Compute statistics based on live communication_logs — no artificial inflation
+      const whatsappLogs = loadedLogs.filter((l: any) => l.channel === 'WhatsApp');
+      const whatsapp = whatsappLogs.filter((l: any) => l.status_info.includes('🟢')).length;
+      const whatsappFailed = whatsappLogs.filter((l: any) => l.status_info.includes('🔴')).length;
+      const whatsappSuccessRate = whatsappLogs.length > 0 ? Math.round(((whatsappLogs.length - whatsappFailed) / whatsappLogs.length) * 100) : 100;
 
-        const emailLogs = loadedLogs.filter((l: any) => l.channel === 'Email');
-        const email = emailLogs.filter((l: any) => l.status_info.includes('🟢')).length;
-        const emailFailed = emailLogs.filter((l: any) => l.status_info.includes('🔴')).length;
-        const emailSuccessRate = emailLogs.length > 0 ? Math.round(((emailLogs.length - emailFailed) / emailLogs.length) * 100) : 100;
+      const emailLogs = loadedLogs.filter((l: any) => l.channel === 'Email');
+      const email = emailLogs.filter((l: any) => l.status_info.includes('🟢')).length;
+      const emailFailed = emailLogs.filter((l: any) => l.status_info.includes('🔴')).length;
+      const emailSuccessRate = emailLogs.length > 0 ? Math.round(((emailLogs.length - emailFailed) / emailLogs.length) * 100) : 100;
 
-        const pend = loadedLogs.filter((l: any) => l.status_info.includes('🔵') || l.status_info.includes('🟡') || l.status_info.includes('🟠')).length;
-        const fail = loadedLogs.filter((l: any) => l.status_info.includes('🔴')).length;
+      const pend = loadedLogs.filter((l: any) => l.status_info.includes('🔵') || l.status_info.includes('🟡') || l.status_info.includes('🟠')).length;
+      const fail = loadedLogs.filter((l: any) => l.status_info.includes('🔴')).length;
 
-        let lastTimeStr = 'N/A';
-        const sorted = [...loadedLogs].sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-        if (sorted[0]) {
-          lastTimeStr = new Date(sorted[0].timestamp).toLocaleTimeString();
-        }
-
-        setCommStats({
-          whatsappDelivered: whatsapp + 2, // Bootstrap initial dynamic values
-          emailDelivered: email + 3,
-          whatsappSuccessRate,
-          emailSuccessRate,
-          pending: pend,
-          failed: fail,
-          lastActivity: lastTimeStr
-        });
-      } else {
-        // Fallback default statistics
-        setCommStats({
-          whatsappDelivered: 12,
-          emailDelivered: 8,
-          whatsappSuccessRate: 100,
-          emailSuccessRate: 88,
-          pending: 0,
-          failed: 1,
-          lastActivity: '12:30 PM'
-        });
+      let lastTimeStr = 'N/A';
+      const sorted = [...loadedLogs].sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      if (sorted[0]) {
+        lastTimeStr = new Date(sorted[0].timestamp).toLocaleTimeString();
       }
+
+      setCommStats({
+        whatsappDelivered: whatsapp,
+        emailDelivered: email,
+        whatsappSuccessRate,
+        emailSuccessRate,
+        pending: pend,
+        failed: fail,
+        lastActivity: lastTimeStr
+      });
 
     } catch (e) {
       console.error("Failure importing reporting collections:", e);
@@ -350,13 +335,21 @@ export function MessagingReportingDashboard({ onBack, currentRole = 'Front Desk 
   };
 
   const handleExportRevenue = () => {
-    const headers = ["Metric Item ID", "Description", "Operational Category", "Taxes (GST 18%) Collected", "Net Captured Gross (INR)"];
-    const rows = [
-      ["REV-101", "Deluxe Room Bookings Stays", "Lodging Tariff", "₹12,400", "₹1,45,000"],
-      ["REV-102", "Executive lounge dining fees", "F&B Division", "₹3,150", "₹42,000"],
-      ["REV-103", "Bespoke conference center slots", "Corporate Lease", "₹9,800", "₹1,18,000"],
-      ["REV-104", "Spa therapy & wellness modules", "Beauty & Recreation", "₹1,200", "₹18,500"]
-    ];
+    const headers = ["Payment ID", "Booking ID", "Guest Name", "Room", "Stay Dates", "Base Amount (INR)", "GST Amount (INR)", "Total Amount (INR)", "Payment Method", "Status", "Transaction Ref"];
+    const rows = reportPayments.map((p: any, idx: number) => [
+      `PAY-${p.payment_id || (idx + 1)}`,
+      `BK-${p.booking_id || 'N/A'}`,
+      p.guest_name || 'N/A',
+      p.room_number ? `Room ${p.room_number}` : 'N/A',
+      p.check_in_date && p.check_out_date ? `${p.check_in_date} to ${p.check_out_date}` : 'N/A',
+      `₹${(Number(p.amount) - Number(p.gst_amount || 0)).toLocaleString('en-IN')}`,
+      `₹${Number(p.gst_amount || 0).toLocaleString('en-IN')}`,
+      `₹${Number(p.amount || 0).toLocaleString('en-IN')}`,
+      p.payment_method || 'N/A',
+      p.payment_status || 'N/A',
+      p.transaction_reference || 'N/A'
+    ]);
+    if (rows.length === 0) rows.push(['N/A', 'N/A', 'No payment records found', '', '', '', '', '', '', '', '']);
     triggerCsvDownload("sai_nirvana_revenue_audit", headers, rows);
   };
 
@@ -414,68 +407,113 @@ export function MessagingReportingDashboard({ onBack, currentRole = 'Front Desk 
     } 
     else if (reportType === 'invoice') {
       title = "Standard Booking & Tariff Invoice Statement";
-      description = "Confidential financial document displaying individual stays room billing, room service tallies, and billing sums.";
-      tableHeaders = ["Transaction ID", "Entrant Party", "Room Unit", "Timeline Duration", "Base Tariff (INR)", "Status"];
-      tableData = bookings.map(b => {
-        const cost = b.price_per_night || 3500;
+      description = "Confidential financial document displaying individual stays room billing with actual payment records from Railway MySQL.";
+      tableHeaders = ["Transaction ID", "Guest Name", "Room Unit", "Timeline Duration", "Base Tariff (INR)", "GST (INR)", "Total (INR)", "Method", "Status"];
+      tableData = reportPayments.map((p: any, idx: number) => {
+        const baseAmount = Number(p.amount || 0) - Number(p.gst_amount || 0);
+        const nights = p.nights || 1;
         return [
-          `INV-${b.booking_id}09`,
-          b.guest_name || "Abhiram Thunikipati",
-          b.room_number ? `Room ${b.room_number}` : "Room 101",
-          `${b.check_in_date} to ${b.check_out_date}`,
-          `₹${cost.toLocaleString('en-IN')}`,
-          "Paid in Full"
+          `INV-SN-${p.payment_id || (idx + 1)}`,
+          p.guest_name || 'N/A',
+          p.room_number ? `Room ${p.room_number}` : 'N/A',
+          p.check_in_date && p.check_out_date ? `${p.check_in_date} → ${p.check_out_date} (${nights}N)` : 'N/A',
+          `₹${baseAmount.toLocaleString('en-IN')}`,
+          `₹${Number(p.gst_amount || 0).toLocaleString('en-IN')}`,
+          `₹${Number(p.amount || 0).toLocaleString('en-IN')}`,
+          p.payment_method || 'N/A',
+          p.payment_status === 'Paid' ? '🟢 Paid' : p.payment_status === 'Refunded' ? '🔴 Refunded' : '🟡 Pending'
         ];
       });
-      totalFooter = `Total Invoiced Gross: ₹${(bookings.reduce((sum, b) => sum + (b.price_per_night || 3500), 0)).toLocaleString('en-IN')}`;
+      if (tableData.length === 0) {
+        tableData.push(['N/A', 'No Records Available', '—', '—', '—', '—', '—', '—', '—']);
+      }
+      const totalInvoiced = reportPayments.reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+      const totalGstInvoiced = reportPayments.reduce((sum: number, p: any) => sum + Number(p.gst_amount || 0), 0);
+      totalFooter = `Total Invoiced: ₹${totalInvoiced.toLocaleString('en-IN')} | Total GST: ₹${totalGstInvoiced.toLocaleString('en-IN')} | Records: ${reportPayments.length}`;
     } 
     else if (reportType === 'gst') {
       title = "Official GST Tax Audit Statement (Form GSTR-2)";
-      description = "Official tax billing breakdown in compliance with Union and District CGST/SGST regulations (calculated at standard 12-18% luxury slab).";
-      tableHeaders = ["Tax Ref Hash", "Tax Beneficiary", "Assessable Value", "CGST Rate", "SGST Rate", "Total Taxes Collected"];
-      tableData = bookings.map(b => {
-        const cost = b.price_per_night || 3500;
-        const gstVal = Math.round(cost * 0.18);
+      description = "Official tax billing breakdown in compliance with CGST/SGST regulations using actual GST amounts from Railway MySQL payments table.";
+      tableHeaders = ["Tax Ref Hash", "Guest Name", "Room", "Timeline", "Base Value (INR)", "CGST (9%)", "SGST (9%)", "Total GST (INR)", "Grand Total (INR)"];
+      tableData = reportPayments.map((p: any, idx: number) => {
+        const baseAmount = Number(p.amount || 0) - Number(p.gst_amount || 0);
+        const gstVal = Number(p.gst_amount || 0);
+        const cgst = Math.floor(gstVal / 2);
+        const sgst = Math.ceil(gstVal / 2);
+        const nights = p.nights || 1;
         return [
-          `TAX-SN-${b.booking_id}11`,
-          b.guest_name || "Self Entrant",
-          `₹${cost.toLocaleString('en-IN')}`,
-          "9.00 %",
-          "9.00 %",
-          `₹${gstVal.toLocaleString('en-IN')}`
+          `TAX-SN-${p.booking_id || (idx + 1)}`,
+          p.guest_name || 'N/A',
+          p.room_number ? `Room ${p.room_number}` : 'N/A',
+          p.check_in_date && p.check_out_date ? `${p.check_in_date} → ${p.check_out_date} (${nights}N)` : 'N/A',
+          `₹${baseAmount.toLocaleString('en-IN')}`,
+          `₹${cgst.toLocaleString('en-IN')}`,
+          `₹${sgst.toLocaleString('en-IN')}`,
+          `₹${gstVal.toLocaleString('en-IN')}`,
+          `₹${Number(p.amount || 0).toLocaleString('en-IN')}`
         ];
       });
-      const totalTax = bookings.reduce((sum, b) => sum + Math.round((b.price_per_night || 3500) * 0.18), 0);
-      totalFooter = `Total Consolidated GST remitted: ₹${totalTax.toLocaleString('en-IN')}`;
+      if (tableData.length === 0) {
+        tableData.push(['N/A', 'No Records Available', '—', '—', '—', '—', '—', '—', '—']);
+      }
+      const totalGst = reportPayments.filter((p: any) => p.payment_status === 'Paid').reduce((sum: number, p: any) => sum + Number(p.gst_amount || 0), 0);
+      const totalBase = reportPayments.filter((p: any) => p.payment_status === 'Paid').reduce((sum: number, p: any) => sum + (Number(p.amount || 0) - Number(p.gst_amount || 0)), 0);
+      totalFooter = `Total Base Value: ₹${totalBase.toLocaleString('en-IN')} | Total GST Remitted: ₹${totalGst.toLocaleString('en-IN')} | Transactions: ${reportPayments.length}`;
     } 
     else if (reportType === 'revenue') {
       title = "Revenue Audit & PNL Lodging Report";
-      description = "Aggregated income report across standard reservations, banquet rentals, gourmet room service, and corporate bids.";
-      tableHeaders = ["Ledger ID", "Income Center Category", "Quarter Target", "Gross Target Fees", "Platform Commissions", "Net Margin"];
-      tableData = [
-        ["REV-A-01", "Deluxe Standard Accomodations", "Q2 - Summer Stay", "₹8,50,000", "0 % (Direct)", "₹8,50,000"],
-        ["REV-A-02", "Executive Private Lounge Banquet", "Q2 - Corporate Lease", "₹2,40,000", "1.5 % (Visa/UPI)", "₹2,36,400"],
-        ["REV-A-03", "F&B In-House Room Dining Service", "Q2 - Kitchen Operations", "₹1,18,000", "0 % (Direct)", "₹1,18,000"],
-        ["REV-A-04", "Premium Wellness Spa & Recreational Spa", "Q2 - Spa Therapies", "₹85,000", "0 % (Direct)", "₹85,000"]
-      ];
-      totalFooter = "Total gross consolidated revenue: ₹12,93,000";
+      description = "Aggregated income report from live Railway MySQL payment transactions — actual bookings, amounts, GST, and payment methods.";
+      tableHeaders = ["Payment ID", "Guest Name", "Room", "Stay Duration", "Base Amount (INR)", "GST (INR)", "Total Paid (INR)", "Method", "Status"];
+      tableData = reportPayments.map((p: any, idx: number) => {
+        const baseAmount = Number(p.amount || 0) - Number(p.gst_amount || 0);
+        return [
+          `PAY-${p.payment_id || (idx + 1)}`,
+          p.guest_name || 'N/A',
+          p.room_number ? `Room ${p.room_number}` : 'N/A',
+          p.check_in_date && p.check_out_date ? `${p.check_in_date} → ${p.check_out_date} (${p.nights || 1}N)` : 'N/A',
+          `₹${baseAmount.toLocaleString('en-IN')}`,
+          `₹${Number(p.gst_amount || 0).toLocaleString('en-IN')}`,
+          `₹${Number(p.amount || 0).toLocaleString('en-IN')}`,
+          p.payment_method || 'N/A',
+          p.payment_status === 'Paid' ? '🟢 Paid' : p.payment_status === 'Refunded' ? '🔴 Refunded' : '🟡 Pending'
+        ];
+      });
+      if (tableData.length === 0) {
+        tableData.push(['N/A', 'No payment records found in the database.', '', '', '', '', '', '', '']);
+      }
+      const totalRevenue = reportPayments.filter((p: any) => p.payment_status === 'Paid').reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
+      const totalGst = reportPayments.filter((p: any) => p.payment_status === 'Paid').reduce((s: number, p: any) => s + Number(p.gst_amount || 0), 0);
+      totalFooter = `Total Paid Revenue: ₹${totalRevenue.toLocaleString('en-IN')} | Total GST Collected: ₹${totalGst.toLocaleString('en-IN')} | Transactions: ${reportPayments.length}`;
     } 
     else if (reportType === 'occupancy') {
       title = "Occupancy Rate & Chamber Audit";
-      description = "Analytical review of live chamber bookings, dirty chamber logs, maintenance slots, and available rooms inventory.";
-      tableHeaders = ["Room Number", "Room Class Pattern", "Live Status", "Base Rent / Night", "Fitted Amenities", "Housekeeper Agent"];
-      tableData = [
-        ["Room 101", "Standard Cabin", "🟢 Available", "₹2,200", "Wi-Fi, AC, TV, Hot Water", "Karan Singh"],
-        ["Room 102", "Standard Cabin", "🔴 Occupied", "₹2,200", "Wi-Fi, AC, TV", "Karan Singh"],
-        ["Room 103", "Standard Cabin", "🟡 Dirty", "₹2,200", "Wi-Fi, AC, TV", "Room Service Pending"],
-        ["Room 201", "Premium Deluxe", "🟢 Available", "₹3,500", "Wi-Fi, AC, TV, Mini Fridge, Balcony", "Amit Patel"],
-        ["Room 202", "Premium Deluxe", "🟢 Available", "₹3,500", "Balcony, Coffee Maker, TV", "Amit Patel"],
-        ["Room 203", "Premium Deluxe", "🔴 Occupied", "₹3,500", "Mini Fridge, Coffee Maker", "Amit Patel"],
-        ["Room 301", "Executive Suite", "🟢 Available", "₹6,500", "Two TVs, Mini Bar, Bathtub, Balcony", "Rahul Sharma"],
-        ["Room 302", "Executive Suite", "🔴 Occupied", "₹6,500", "Living Area, Bathtub, Kitchenette", "Rahul Sharma"],
-        ["Room 401", "Presidential Suite", "🟢 Available", "₹12,000", "Private Jacuzzi, 24/7 Butler Service", "Amit Patel"]
-      ];
-      totalFooter = "Consolidated Hotel Occupancy Index: 33.3% (3 out of 9 chambers active)";
+      description = "Live room status data from Railway MySQL — actual Available, Occupied, Dirty, and Maintenance counts from the rooms table.";
+      tableHeaders = ["Room Number", "Room Class Pattern", "Live Status", "Base Rent / Night", "Fitted Amenities"];
+      tableData = rooms.map((r: any) => {
+        const amenities = Array.isArray(r.amenities) ? r.amenities.slice(0, 4).join(', ') : (r.amenities || 'Standard Amenities');
+        const statusLabel = r.room_status === 'Available' ? '🟢 Available'
+          : r.room_status === 'Occupied' ? '🔴 Occupied'
+          : r.room_status === 'Dirty' ? '🟡 Pending Clean'
+          : r.room_status === 'Maintenance' ? '🔵 Maintenance'
+          : r.room_status;
+        return [
+          `Room ${r.room_number}`,
+          r.room_type || 'Standard Room',
+          statusLabel,
+          `₹${Number(r.price_per_night || 0).toLocaleString('en-IN')}`,
+          amenities
+        ];
+      });
+      if (tableData.length === 0) {
+        tableData.push(['N/A', 'No room records found in the database.', '', '', '']);
+      }
+      const totalRooms = rooms.length;
+      const occupiedCount = rooms.filter((r: any) => r.room_status === 'Occupied').length;
+      const availableCount = rooms.filter((r: any) => r.room_status === 'Available').length;
+      const dirtyCount = rooms.filter((r: any) => r.room_status === 'Dirty').length;
+      const maintenanceCount = rooms.filter((r: any) => r.room_status === 'Maintenance').length;
+      const occupancyPct = totalRooms > 0 ? Math.round((occupiedCount / totalRooms) * 100) : 0;
+      totalFooter = `Total Rooms: ${totalRooms} | Occupied: ${occupiedCount} | Available: ${availableCount} | Dirty: ${dirtyCount} | Maintenance: ${maintenanceCount} | Occupancy: ${occupancyPct}%`;
     }
     else if (reportType === 'complaints') {
       title = "Guest Complaints & Redressal Audit Book";
@@ -507,72 +545,69 @@ export function MessagingReportingDashboard({ onBack, currentRole = 'Front Desk 
     }
     else if (reportType === 'history') {
       title = "Guest Stay History & Feedback Registry";
-      description = "Aggregated records of historical reservations, accommodation frequencies, feedback, and customer satisfaction index.";
-      tableHeaders = ["ID", "Guest Client", "Room Code", "Dates Interval", "INR Paid", "Feedback Rating"];
+      description = "Aggregated records of historical reservations, accommodation frequencies, feedback, and customer satisfaction index from Railway MySQL.";
+      tableHeaders = ["ID", "Guest Client", "Room Code", "Dates Interval", "Nights", "INR Paid", "Feedback Rating"];
       tableData = bookings.map(b => {
-        const guestFeedback = feedback.find((f: any) => String(f.guest_name) === String(b.guest_name)) || {
-          rating: 4.8,
-          comments: "Exemplary luxurious hospitality."
-        };
-        const totalPaid = (b.price_per_night || 3500) * 4;
+        const guestFeedback = feedback.find((f: any) => String(f.guest_id) === String(b.guest_id) || String(f.guest_name) === String(b.guest_name));
+        // Calculate real nights from actual dates
+        const cin = b.check_in_date ? new Date(b.check_in_date) : null;
+        const cout = b.check_out_date ? new Date(b.check_out_date) : null;
+        const nights = cin && cout ? Math.max(1, Math.round((cout.getTime() - cin.getTime()) / (1000 * 60 * 60 * 24))) : 1;
+        // Find payment record for this booking
+        const matchedPayment = reportPayments.find((p: any) => p.booking_id === b.booking_id);
+        const totalPaid = matchedPayment ? Number(matchedPayment.amount || 0) : (Number(b.price_per_night || 0) * nights);
+        const ratingStr = guestFeedback ? `★ ${guestFeedback.rating} / ${String(guestFeedback.comments || '').substring(0, 18)}...` : 'No feedback yet';
         return [
           `BK-${b.booking_id}`,
           b.guest_name || "Premium Lodger",
-          b.room_number ? `Room ${b.room_number}` : "Room 101",
-          `${b.check_in_date} to ${b.check_out_date}`,
+          b.room_number ? `Room ${b.room_number}` : "N/A",
+          `${b.check_in_date || 'N/A'} to ${b.check_out_date || 'N/A'}`,
+          `${nights} Night${nights !== 1 ? 's' : ''}`,
           `₹${totalPaid.toLocaleString('en-IN')}`,
-          `★ ${guestFeedback.rating} / ${guestFeedback.comments.substring(0, 18)}...`
+          ratingStr
         ];
       });
       if (tableData.length === 0) {
-        tableData.push(["N/A", "No historical gueststays records found.", "", "", "", ""]);
+        tableData.push(["N/A", "No stay records found in the database.", "", "", "", "", ""]);
       }
-      totalFooter = `Consolidated Stays Indexed: ${tableData.length} checked-out profiles`;
+      totalFooter = `Total Stays Indexed: ${tableData.length} | Feedback Received: ${feedback.length}`;
     }
     else if (reportType === 'housekeeping') {
       title = "Guest Services Duties & Bedding Dispatch Queue";
-      description = "Current cleaning schedules, supervisor check-offs, and room turnaround tracking metrics.";
+      description = "Current cleaning schedules, supervisor check-offs, and room turnaround tracking metrics from Railway MySQL.";
       tableHeaders = ["Task Job ID", "Chamber No", "Room Class", "Staff Assigned", "Operational Clean Status", "Last Complete Log"];
       tableData = housekeeping.map((t: any) => [
-        `JOB-00${t.task_id}`,
+        `JOB-${String(t.task_id).padStart(3, '0')}`,
         `Chamber ${t.room_number || 'N/A'}`,
-        t.room_type || "Standard Cabin",
-        "Karan Singh / Cleaner",
+        t.room_type || 'Standard Room',
+        t.assigned_staff || 'Unassigned',
         t.task_status === 'Completed' ? '🟢 Ready & Safe' : t.task_status === 'In Progress' ? '🔵 In Progress' : '🟡 Pending',
         t.completion_time ? new Date(t.completion_time).toLocaleTimeString() : 'Pending Discharge'
       ]);
       if (tableData.length === 0) {
-        tableData = [
-          ["JOB-001", "Chamber 101", "Standard Cabin", "Karan Singh", "🟢 Clean Complete", "11:20 AM"],
-          ["JOB-002", "Chamber 103", "Standard Cabin", "Karan Singh", "🟡 Room Dirty / Pending", "Pending Discharge"],
-          ["JOB-003", "Chamber 202", "Premium Deluxe", "Amit Patel", "🔵 Scrubbing / In Progress", "In Progress"],
-          ["JOB-004", "Chamber 302", "Executive Suite", "Rahul Sharma", "🟢 Clean Complete", "01:15 PM"]
-        ];
+        tableData.push(['N/A', 'No housekeeping tasks found in the database.', '', '', '', '']);
       }
-      const completedCount = tableData.filter(r => r[4].includes('Complete') || r[4].includes('🟢')).length;
-      totalFooter = `Tasks Scheduled: ${tableData.length} | Jobs Reconciled: ${completedCount}`;
+      const completedCount = housekeeping.filter((t: any) => t.task_status === 'Completed').length;
+      totalFooter = `Tasks Scheduled: ${housekeeping.length} | Jobs Completed: ${completedCount} | Pending: ${housekeeping.length - completedCount}`;
     }
     else if (reportType === 'communication') {
       title = "Automated Communication Transmission Report";
-      description = "Unified gateway delivery logs mapping Outbound messaging triggers, WhatsApp packets, and Mail deliverability tallies.";
-      tableHeaders = ["Activity Timestamp", "Guest Contact", "Transmission Type", "Gateway Channel", "Deliverability State"];
+      description = "Unified gateway delivery logs mapping outbound messaging triggers, WhatsApp packets, and email deliverability — from Railway MySQL communication_history table.";
+      tableHeaders = ["Activity Timestamp", "Guest Name", "Recipient Contact", "Comm Type", "Gateway Channel", "Deliverability State"];
       tableData = commLogs.map((l: any) => [
-        new Date(l.timestamp).toLocaleTimeString(),
-        l.recipient || "+91981248842",
-        l.event_type || "Booking Notice",
-        l.channel || "WhatsApp",
-        l.status_info || "🟢 Sent"
+        l.timestamp ? new Date(l.timestamp).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' }) : 'N/A',
+        l.guest_name || 'N/A',
+        l.recipient_email || l.guest_id_str || 'N/A',
+        l.communication_type || 'N/A',
+        l.channel || 'N/A',
+        l.status_info || '🟡 Unknown'
       ]);
       if (tableData.length === 0) {
-        tableData = [
-          ["14:24:02 PM", "thunikipatiabhiram173@gmail.com", "Tax Billing Invoice Copy", "Email", "🟢 Dispatched Status Confirmed"],
-          ["14:25:11 PM", "+91 98124 88321", "Check-in Welcoming Card", "WhatsApp", "🟢 Received & Read (Meta)"],
-          ["15:10:45 PM", "+91 98124 88321", "Midnight Dining Check-off", "WhatsApp", "🟢 Received & Read (Meta)"],
-          ["15:45:00 PM", "unknown-email@service.com", "Manager Ledger Alert Check", "Email", "🔴 Failed - Mailbox Inactive"]
-        ];
+        tableData.push(['N/A', 'N/A', 'No communication logs found in the database.', '', '', '']);
       }
-      const successCount = tableData.filter(r => r[4].includes('Dispatched') || r[4].includes('🟢') || r[4].includes('Received')).length;
-      totalFooter = `Overall Packets Dispatched: ${tableData.length} | Success Transmission: ${successCount}`;
+      const successCount = commLogs.filter((l: any) => l.status_info && l.status_info.includes('🟢')).length;
+      const failCount = commLogs.filter((l: any) => l.status_info && l.status_info.includes('🔴')).length;
+      totalFooter = `Total Logs: ${commLogs.length} | Delivered: ${successCount} | Failed: ${failCount} | WhatsApp: ${commLogs.filter((l: any) => l.channel === 'WhatsApp').length} | Email: ${commLogs.filter((l: any) => l.channel === 'Email').length}`;
     }
 
     setActiveReportPdf({
@@ -1924,13 +1959,14 @@ export function MessagingReportingDashboard({ onBack, currentRole = 'Front Desk 
                       playSound('print');
                       generatePdfReport(activeReportPdf.type, {
                         bookings,
-                        payments,
+                        payments: reportPayments.length > 0 ? reportPayments : payments,
                         complaints,
                         feedback,
                         housekeeping,
                         commLogs,
-                        rooms
-                      });
+                        rooms,
+                        corporate
+                      }, { generatedBy: currentRole });
                     }}
                     className="bg-[#D4AF37] hover:bg-[#B4912B] text-slate-950 text-xs font-bold py-2.5 px-5 rounded-xl flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
                   >
