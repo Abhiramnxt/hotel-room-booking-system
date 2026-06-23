@@ -381,6 +381,136 @@ function InnerAdminDashboard({ currentRole = 'Hotel Manager' }: AdminDashboardPr
         )}
       </div>
 
+      {/* GUEST FEEDBACK & REVIEWS SECTION */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-md overflow-hidden" id="admin_feedback_section">
+        <div className="p-5 border-b bg-slate-50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 rounded-xl bg-amber-50 flex items-center justify-center border border-amber-100">
+              <Star className="h-4.5 w-4.5 text-amber-500 fill-amber-200" />
+            </div>
+            <div>
+              <h4 className="text-sm font-bold text-slate-950 uppercase tracking-widest">Guest Feedback & Reviews</h4>
+              <p className="text-[10px] text-slate-500 mt-0.5">All guest-submitted satisfaction ratings and comments — sorted by newest</p>
+            </div>
+          </div>
+          <span className="text-[10px] bg-amber-100 text-amber-700 px-2.5 py-1 rounded-full font-bold font-mono border border-amber-200">
+            {(feedback || []).length} Review{(feedback || []).length !== 1 ? 's' : ''} Received
+          </span>
+        </div>
+
+        {/* Summary Stat Cards */}
+        {(feedback || []).length > 0 && (() => {
+          const total = feedback.length;
+          const avgRating = total > 0 ? (feedback.reduce((s, f) => s + Number(f.rating || 0), 0) / total).toFixed(1) : '0.0';
+          const positive = feedback.filter(f => Number(f.rating) >= 4).length;
+          const negative = feedback.filter(f => Number(f.rating) <= 2).length;
+          return (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-5 border-b border-slate-100 bg-gradient-to-r from-slate-50/80 to-amber-50/30">
+              <div className="bg-white rounded-xl p-4 border border-slate-200 space-y-1 shadow-sm text-center">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Total Feedback</p>
+                <p className="text-2xl font-bold font-mono text-[#003366]">{total}</p>
+                <p className="text-[9px] text-slate-400">submissions</p>
+              </div>
+              <div className="bg-white rounded-xl p-4 border border-amber-200 space-y-1 shadow-sm text-center">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-amber-600">Average Rating</p>
+                <p className="text-2xl font-bold font-mono text-amber-600">★ {avgRating}</p>
+                <p className="text-[9px] text-slate-400">out of 5 stars</p>
+              </div>
+              <div className="bg-white rounded-xl p-4 border border-emerald-200 space-y-1 shadow-sm text-center">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">Positive Reviews</p>
+                <p className="text-2xl font-bold font-mono text-emerald-600">{positive}</p>
+                <p className="text-[9px] text-slate-400">rated 4–5 stars</p>
+              </div>
+              <div className="bg-white rounded-xl p-4 border border-rose-200 space-y-1 shadow-sm text-center">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-rose-600">Negative Reviews</p>
+                <p className="text-2xl font-bold font-mono text-rose-600">{negative}</p>
+                <p className="text-[9px] text-slate-400">rated 1–2 stars</p>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Feedback Table */}
+        {(feedback || []).length === 0 ? (
+          <div className="p-10 text-center text-slate-500 text-xs space-y-2">
+            <Star className="h-9 w-9 mx-auto text-slate-200 stroke-1" />
+            <p className="font-medium">No guest feedback submitted yet.</p>
+            <p className="text-[10px] text-slate-400">Guest reviews will appear here once guests submit feedback from their dashboard.</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] text-left text-xs font-sans">
+              <thead>
+                <tr className="bg-slate-50 text-slate-600 font-bold border-b text-[10px] uppercase tracking-wider">
+                  <th className="py-3 px-4">Guest Name</th>
+                  <th className="py-3 px-4">Room</th>
+                  <th className="py-3 px-4">Booking ID</th>
+                  <th className="py-3 px-4">Rating</th>
+                  <th className="py-3 px-4">Feedback Comment</th>
+                  <th className="py-3 px-4">Check-In</th>
+                  <th className="py-3 px-4">Check-Out</th>
+                  <th className="py-3 px-4">Submitted</th>
+                  <th className="py-3 px-4 text-center">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {[...(feedback || [])].sort((a, b) => new Date(b.submitted_at || 0).getTime() - new Date(a.submitted_at || 0).getTime()).map((f) => {
+                  const stars = Number(f.rating) || 0;
+                  const ratingColor = stars >= 4 ? 'text-emerald-600' : stars <= 2 ? 'text-rose-500' : 'text-amber-500';
+                  const starLabel = stars >= 4 ? '🟢' : stars <= 2 ? '🔴' : '🟡';
+                  return (
+                    <tr key={f.feedback_id} className="hover:bg-amber-50/30 transition-colors group">
+                      <td className="py-3 px-4 font-bold text-slate-800">{f.guest_name || 'Guest'}</td>
+                      <td className="py-3 px-4">
+                        {f.room_number ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                            Room {f.room_number}
+                          </span>
+                        ) : <span className="text-slate-400">—</span>}
+                      </td>
+                      <td className="py-3 px-4 font-mono text-[10px] text-slate-500">
+                        {f.booking_id ? `BK-${f.booking_id}` : '—'}
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-1">
+                          <span className={`font-extrabold text-sm ${ratingColor}`}>
+                            {'★'.repeat(stars)}{'☆'.repeat(Math.max(0, 5 - stars))}
+                          </span>
+                          <span className={`text-[10px] font-bold ${ratingColor}`}>{stars}/5</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-slate-600 max-w-[220px]">
+                        <span className="line-clamp-2 leading-relaxed" title={f.comments}>
+                          {f.comments || '—'}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 font-mono text-[10px] text-slate-500">
+                        {f.check_in_date || '—'}
+                      </td>
+                      <td className="py-3 px-4 font-mono text-[10px] text-slate-500">
+                        {f.check_out_date || '—'}
+                      </td>
+                      <td className="py-3 px-4 font-mono text-[10px] text-slate-400">
+                        {f.submitted_at ? new Date(f.submitted_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${
+                          stars >= 4 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                          stars <= 2 ? 'bg-rose-50 text-rose-700 border border-rose-200' :
+                          'bg-amber-50 text-amber-700 border border-amber-200'
+                        }`}>
+                          {starLabel} {stars >= 4 ? 'Positive' : stars <= 2 ? 'Negative' : 'Neutral'}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* PRIVATE GUEST CREDENTIALS MANAGER MODULE */}
       <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200/80 shadow-md space-y-4">
         <div>

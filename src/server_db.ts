@@ -307,12 +307,27 @@ export const dbOps = {
 
   getFeedback: () => {
     const sql = `
-      SELECT f.*, g.full_name AS guest_name, g.email AS guest_email
+      SELECT f.*, 
+             g.full_name AS guest_name, g.email AS guest_email,
+             b.booking_id, b.check_in_date, b.check_out_date,
+             r.room_number
       FROM feedback f
-      LEFT JOIN guests g ON f.guest_id = g.guest_id;
+      LEFT JOIN guests g ON f.guest_id = g.guest_id
+      LEFT JOIN bookings b ON b.booking_id = (
+        SELECT booking_id FROM bookings 
+        WHERE guest_id = f.guest_id 
+        ORDER BY booking_id DESC LIMIT 1
+      )
+      LEFT JOIN rooms r ON b.room_id = r.room_id
+      ORDER BY f.submitted_at DESC;
     `;
-    return executeQueryAsync(sql, ['feedback', 'guests'], async () => {
-      return await query(sql);
+    return executeQueryAsync(sql, ['feedback', 'guests', 'bookings', 'rooms'], async () => {
+      const rows = await query(sql);
+      return rows.map((row: any) => ({
+        ...row,
+        check_in_date: row.check_in_date ? formatDate(row.check_in_date) : null,
+        check_out_date: row.check_out_date ? formatDate(row.check_out_date) : null,
+      }));
     });
   },
 

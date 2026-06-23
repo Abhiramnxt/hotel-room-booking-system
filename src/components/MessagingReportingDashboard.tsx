@@ -354,8 +354,20 @@ export function MessagingReportingDashboard({ onBack, currentRole = 'Front Desk 
   };
 
   const handleExportFeedback = () => {
-    const headers = ["Feedback ID", "Guest Name", "Satisfaction Rating (1-5 Stars)", "User Review Comments", "Date Logs Logged"];
-    const rows = feedback.map(f => [f.feedback_id, f.guest_name || "Premium Entrant", f.rating + " Stars", f.comments, f.submitted_at]);
+    const headers = ["Feedback ID", "Guest Name", "Guest Email", "Booking ID", "Room Number", "Check-In Date", "Check-Out Date", "Rating (Stars)", "Feedback Comment", "Submitted At"];
+    const rows = feedback.map(f => [
+      f.feedback_id,
+      f.guest_name || 'N/A',
+      f.guest_email || 'N/A',
+      f.booking_id ? `BK-${f.booking_id}` : 'N/A',
+      f.room_number ? `Room ${f.room_number}` : 'N/A',
+      f.check_in_date || 'N/A',
+      f.check_out_date || 'N/A',
+      `${f.rating} Stars`,
+      f.comments || '',
+      f.submitted_at ? new Date(f.submitted_at).toLocaleString('en-IN') : 'N/A'
+    ]);
+    if (rows.length === 0) rows.push(['N/A', 'No feedback records found', '', '', '', '', '', '', '', '']);
     triggerCsvDownload("sai_nirvana_guest_reviews", headers, rows);
   };
 
@@ -608,6 +620,36 @@ export function MessagingReportingDashboard({ onBack, currentRole = 'Front Desk 
       const successCount = commLogs.filter((l: any) => l.status_info && l.status_info.includes('🟢')).length;
       const failCount = commLogs.filter((l: any) => l.status_info && l.status_info.includes('🔴')).length;
       totalFooter = `Total Logs: ${commLogs.length} | Delivered: ${successCount} | Failed: ${failCount} | WhatsApp: ${commLogs.filter((l: any) => l.channel === 'WhatsApp').length} | Email: ${commLogs.filter((l: any) => l.channel === 'Email').length}`;
+    }
+    else if (reportType === 'feedback') {
+      title = "Guest Feedback & Satisfaction Registry Report";
+      description = "Complete audit of guest-submitted satisfaction ratings and comments linked to bookings and room allocations — sourced from Railway MySQL feedback table.";
+      tableHeaders = ["Feedback ID", "Guest Name", "Room", "Booking ID", "Rating", "Feedback Comment", "Check-In", "Check-Out", "Submitted Date", "Status"];
+      const sortedFeedback = [...feedback].sort((a: any, b: any) => new Date(b.submitted_at || 0).getTime() - new Date(a.submitted_at || 0).getTime());
+      tableData = sortedFeedback.map((f: any) => {
+        const stars = Number(f.rating) || 0;
+        const starStr = '★'.repeat(stars) + '☆'.repeat(Math.max(0, 5 - stars));
+        const statusLabel = stars >= 4 ? '🟢 Positive' : stars <= 2 ? '🔴 Negative' : '🟡 Neutral';
+        return [
+          `FB-${f.feedback_id}`,
+          f.guest_name || 'Guest',
+          f.room_number ? `Room ${f.room_number}` : 'N/A',
+          f.booking_id ? `BK-${f.booking_id}` : 'N/A',
+          `${starStr} (${stars}/5)`,
+          f.comments || 'No comment',
+          f.check_in_date || 'N/A',
+          f.check_out_date || 'N/A',
+          f.submitted_at ? new Date(f.submitted_at).toLocaleDateString('en-IN') : 'N/A',
+          statusLabel
+        ];
+      });
+      if (tableData.length === 0) {
+        tableData.push(['N/A', 'No feedback records found in the database.', '', '', '', '', '', '', '', '']);
+      }
+      const avgRating = feedback.length > 0 ? (feedback.reduce((s: number, f: any) => s + Number(f.rating || 0), 0) / feedback.length).toFixed(1) : '0.0';
+      const positiveCount = feedback.filter((f: any) => Number(f.rating) >= 4).length;
+      const negativeCount = feedback.filter((f: any) => Number(f.rating) <= 2).length;
+      totalFooter = `Total Reviews: ${feedback.length} | Average Rating: ${avgRating}/5 | Positive (4-5★): ${positiveCount} | Negative (1-2★): ${negativeCount}`;
     }
 
     setActiveReportPdf({
@@ -1570,7 +1612,143 @@ export function MessagingReportingDashboard({ onBack, currentRole = 'Front Desk 
             </div>
           </button>
 
+          {/* Guest Feedback Registry Report */}
+          <button 
+            onClick={() => handleOpenPdfReport('feedback')}
+            className="p-5 bg-white hover:bg-amber-50/50 border border-slate-200 hover:border-amber-300 rounded-xl transition-all cursor-pointer text-left space-y-3 group"
+          >
+            <div className="w-9 h-9 bg-amber-50 rounded-lg flex items-center justify-center text-amber-600 group-hover:scale-110 transition-transform">
+              <Sparkles className="h-4.5 w-4.5" />
+            </div>
+            <div>
+              <h5 className="text-xs font-bold text-slate-900">Guest Feedback Report</h5>
+              <p className="text-[10px] text-slate-500 mt-1">Ratings, reviews & satisfaction</p>
+            </div>
+          </button>
+
         </div>
+      </div>
+
+      {/* GUEST FEEDBACK REGISTRY – Live Table */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-md overflow-hidden" id="feedback_registry_live_table">
+        <div className="p-5 border-b bg-gradient-to-r from-amber-50/60 to-slate-50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 rounded-xl bg-amber-100 flex items-center justify-center border border-amber-200">
+              <Sparkles className="h-4 w-4 text-amber-600" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 uppercase tracking-widest">Guest Feedback Registry</h3>
+              <p className="text-[10px] text-slate-500 mt-0.5">Live registry of all guest satisfaction submissions — linked to bookings and rooms</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {feedback.length > 0 && (() => {
+              const avg = (feedback.reduce((s: number, f: any) => s + Number(f.rating || 0), 0) / feedback.length).toFixed(1);
+              const pos = feedback.filter((f: any) => Number(f.rating) >= 4).length;
+              const neg = feedback.filter((f: any) => Number(f.rating) <= 2).length;
+              return (
+                <>
+                  <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold border border-emerald-200">{pos} Positive</span>
+                  <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold border border-amber-200">★ {avg} Avg</span>
+                  <span className="text-[10px] bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full font-bold border border-rose-200">{neg} Negative</span>
+                </>
+              );
+            })()}
+            <button
+              onClick={handleExportFeedback}
+              className="flex items-center gap-1 text-[10px] font-bold bg-[#003366] text-white px-3 py-1.5 rounded-lg hover:bg-[#001f3f] transition-colors cursor-pointer"
+            >
+              <Download className="h-3 w-3" />
+              <span>CSV Export</span>
+            </button>
+            <button
+              onClick={() => handleOpenPdfReport('feedback')}
+              className="flex items-center gap-1 text-[10px] font-bold bg-amber-500 text-white px-3 py-1.5 rounded-lg hover:bg-amber-600 transition-colors cursor-pointer"
+            >
+              <FileText className="h-3 w-3" />
+              <span>PDF Report</span>
+            </button>
+          </div>
+        </div>
+
+        {isLoading ? (
+          <div className="py-12 text-center text-slate-400 text-xs space-y-2">
+            <RefreshCw className="h-6 w-6 animate-spin mx-auto text-amber-400" />
+            <p>Loading feedback registry...</p>
+          </div>
+        ) : feedback.length === 0 ? (
+          <div className="py-12 text-center text-slate-400 text-xs space-y-2">
+            <Sparkles className="h-8 w-8 mx-auto stroke-1 text-slate-200" />
+            <p className="font-medium">No guest feedback recorded yet.</p>
+            <p className="text-[10px] text-slate-400">Guest feedback will appear here once guests submit reviews from their portal dashboard.</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1000px] text-left text-xs font-sans border-collapse">
+              <thead>
+                <tr className="bg-amber-50/60 text-slate-600 font-bold border-b text-[10px] uppercase tracking-wider">
+                  <th className="py-3 px-4">#</th>
+                  <th className="py-3 px-4">Guest Name</th>
+                  <th className="py-3 px-4">Room</th>
+                  <th className="py-3 px-4">Booking ID</th>
+                  <th className="py-3 px-4">Rating</th>
+                  <th className="py-3 px-4">Feedback Comment</th>
+                  <th className="py-3 px-4">Check-In</th>
+                  <th className="py-3 px-4">Check-Out</th>
+                  <th className="py-3 px-4">Submitted Date</th>
+                  <th className="py-3 px-4 text-center">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {[...feedback].sort((a: any, b: any) => new Date(b.submitted_at || 0).getTime() - new Date(a.submitted_at || 0).getTime()).map((f: any, idx: number) => {
+                  const stars = Number(f.rating) || 0;
+                  const ratingColor = stars >= 4 ? 'text-emerald-600' : stars <= 2 ? 'text-rose-500' : 'text-amber-500';
+                  const starLabel = stars >= 4 ? '🟢 Positive' : stars <= 2 ? '🔴 Negative' : '🟡 Neutral';
+                  const statusBadge = stars >= 4
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : stars <= 2
+                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                    : 'bg-amber-50 text-amber-700 border-amber-200';
+                  return (
+                    <tr key={f.feedback_id || idx} className="hover:bg-amber-50/20 transition-colors">
+                      <td className="py-2.5 px-4 font-mono text-[10px] text-slate-400">{idx + 1}</td>
+                      <td className="py-2.5 px-4 font-bold text-slate-800">{f.guest_name || 'Guest'}</td>
+                      <td className="py-2.5 px-4">
+                        {f.room_number ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                            Room {f.room_number}
+                          </span>
+                        ) : <span className="text-slate-300">—</span>}
+                      </td>
+                      <td className="py-2.5 px-4 font-mono text-[10px] text-slate-500">
+                        {f.booking_id ? `BK-${f.booking_id}` : '—'}
+                      </td>
+                      <td className="py-2.5 px-4">
+                        <div className="flex items-center gap-1">
+                          <span className={`text-sm font-bold ${ratingColor}`}>{'★'.repeat(stars)}{'☆'.repeat(Math.max(0, 5 - stars))}</span>
+                          <span className={`text-[10px] font-semibold ${ratingColor}`}>{stars}/5</span>
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-4 text-slate-600 max-w-[200px]">
+                        <span className="line-clamp-2" title={f.comments}>{f.comments || '—'}</span>
+                      </td>
+                      <td className="py-2.5 px-4 font-mono text-[10px] text-slate-500">{f.check_in_date || '—'}</td>
+                      <td className="py-2.5 px-4 font-mono text-[10px] text-slate-500">{f.check_out_date || '—'}</td>
+                      <td className="py-2.5 px-4 font-mono text-[10px] text-slate-400">
+                        {f.submitted_at ? new Date(f.submitted_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                      </td>
+                      <td className="py-2.5 px-4 text-center">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border ${statusBadge}`}>
+                          {starLabel}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* 3. CSV EXPORTS CENTER */}

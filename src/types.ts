@@ -129,6 +129,12 @@ export interface Feedback {
   // join fields
   guest_name?: string;
   guest_email?: string;
+  // booking & room join fields
+  booking_id?: number;
+  room_number?: string;
+  check_in_date?: string;
+  check_out_date?: string;
+  feedback_status?: 'Pending Review' | 'Reviewed';
 }
 
 export interface CorporateBooking {
