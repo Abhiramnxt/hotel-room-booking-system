@@ -878,10 +878,7 @@ export const dbOps = {
     stay_duration: string;
   }) => {
     const sql = `INSERT INTO guest_accounts ...`;
-    console.log('[Diagnostics DB] createGuestAccount data received:', data);
     return executeQueryAsync(sql, ['guest_accounts', 'guests'], async () => {
-      console.log('[Diagnostics DB] Beginning guest account transaction');
-
       // CRITICAL: All steps (GET_LOCK, START TRANSACTION, SELECT, INSERT, COMMIT,
       // RELEASE_LOCK) MUST run on the same physical MySQL connection.
       // Using pool.getConnection() guarantees this — the shared query()/execute()
@@ -896,7 +893,6 @@ export const dbOps = {
           'SELECT GET_LOCK(?, 10) AS locked', [lockName]
         );
         const locked = (lockResult as any[])[0]?.locked;
-        console.log('[Diagnostics DB] Advisory lock GET_LOCK result:', locked, '| connection threadId:', (conn as any).threadId);
         if (!locked) {
           throw new Error('Could not acquire advisory lock for guest ID generation. Please try again.');
         }
@@ -911,35 +907,28 @@ export const dbOps = {
             WHERE guest_id_str LIKE 'SNP2026%'
           `);
           const maxSuffix = (maxRows as any[])[0]?.max_suffix;
-          console.log('[Diagnostics DB] MAX suffix query result — max_suffix:', maxSuffix);
 
           const nextNum = (maxSuffix !== null && maxSuffix !== undefined)
             ? Number(maxSuffix) + 1
             : 1;
-          console.log(`[Diagnostics DB] Computed nextNum: ${nextNum} (max_suffix was ${maxSuffix})`);
 
           const guest_id_str = `SNP2026${String(nextNum).padStart(3, '0')}`;
           const username     = `guest_snp${String(nextNum).padStart(3, '0')}`;
           const raw_password = `Temp@${Math.floor(100 + Math.random() * 900)}`;
           const password_hash = raw_password; // Plaintext password directly stored in database
 
-          console.log('[Diagnostics DB] ✅ INSERTING — guest_id_str:', guest_id_str, '| username:', username, '| password_hash (plaintext):', password_hash);
-
           const [insertResult] = await conn.execute(
             'INSERT INTO guest_accounts (guest_id_str, username, password_hash, full_name, mobile_number, email, stay_duration, is_activated, first_login_password_changed) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0)',
             [guest_id_str, username, password_hash, data.full_name, data.mobile_number, data.email, data.stay_duration]
           );
           const accountId = (insertResult as any).insertId;
-          console.log('[Diagnostics DB] INSERT guest_accounts succeeded — new account_id:', accountId);
 
           await conn.execute(
             'INSERT INTO guests (full_name, email, mobile_number, address, government_id) VALUES (?, ?, ?, "Refer to Guest Access Preference in Relational Index", ?)',
             [data.full_name, data.email, data.mobile_number, `Verified Guest Account (${guest_id_str})`]
           );
-          console.log('[Diagnostics DB] INSERT guests succeeded');
 
           await conn.query('COMMIT');
-          console.log('[Diagnostics DB] COMMIT successful — account created:', guest_id_str);
 
           const [accRows] = await conn.query(
             'SELECT * FROM guest_accounts WHERE account_id = ?', [accountId]
@@ -952,17 +941,15 @@ export const dbOps = {
             first_login_password_changed: !!acc.first_login_password_changed
           };
         } catch (err) {
-          console.error('[Diagnostics DB] Transaction failed, rolling back. Error:', err);
+          console.error('[DB] createGuestAccount transaction failed, rolling back:', err);
           await conn.query('ROLLBACK');
           throw err;
         }
       } finally {
         try {
           await conn.query('SELECT RELEASE_LOCK(?)', [lockName]);
-          console.log('[Diagnostics DB] Advisory lock released');
         } catch (_) {}
         conn.release();
-        console.log('[Diagnostics DB] Connection returned to pool');
       }
     });
   },
@@ -977,7 +964,6 @@ export const dbOps = {
     preferred_room_type?: string;
   }) => {
     const sql = `INSERT INTO guest_accounts (self_register) ...`;
-    console.log('[Diagnostics DB] registerGuestAccount data received:', data.email);
     return executeQueryAsync(sql, ['guest_accounts', 'guests'], async () => {
       const conn = await getPool().getConnection();
       const lockName = 'snp_guest_account_id_lock';
@@ -1098,22 +1084,29 @@ export const dbOps = {
   toggleGuestAccountActivation: (accountId: number) => {
     const sql = `UPDATE guest_accounts SET is_activated = ...`;
     return executeQueryAsync(sql, ['guest_accounts'], async () => {
-      await query('START TRANSACTION');
+      // Use a dedicated connection so START TRANSACTION, SELECT, UPDATE, and
+      // COMMIT all run on the same physical MySQL connection — avoids the
+      // transaction isolation bug where pool.query() can return different connections.
+      const conn = await getPool().getConnection();
       try {
-        const accounts = await query('SELECT is_activated FROM guest_accounts WHERE account_id = ?', [accountId]);
-        if (accounts.length === 0) throw new Error("Account index not found.");
-        const nextStatus = accounts[0].is_activated ? 0 : 1;
-        await execute('UPDATE guest_accounts SET is_activated = ? WHERE account_id = ?', [nextStatus, accountId]);
-        await query('COMMIT');
-        const [acc] = await query('SELECT * FROM guest_accounts WHERE account_id = ?', [accountId]);
+        await conn.beginTransaction();
+        const [rows] = await conn.query('SELECT is_activated FROM guest_accounts WHERE account_id = ?', [accountId]);
+        if ((rows as any[]).length === 0) throw new Error("Account index not found.");
+        const nextStatus = (rows as any[])[0].is_activated ? 0 : 1;
+        await conn.execute('UPDATE guest_accounts SET is_activated = ? WHERE account_id = ?', [nextStatus, accountId]);
+        await conn.commit();
+        const [accRows] = await conn.query('SELECT * FROM guest_accounts WHERE account_id = ?', [accountId]);
+        const acc = (accRows as any[])[0];
         return {
           ...acc,
           is_activated: !!acc.is_activated,
           first_login_password_changed: !!acc.first_login_password_changed
         };
       } catch (err) {
-        await query('ROLLBACK');
+        await conn.rollback();
         throw err;
+      } finally {
+        conn.release();
       }
     });
   },
@@ -1287,20 +1280,24 @@ export const dbOps = {
           'SELECT * FROM bookings WHERE room_id = ? AND booking_status IN ("Checked-Out", "Checked-In") AND check_out_date >= ?',
           [roomId, todayStr]
         );
+        // Collect all dates first, then reset in a single batched UPDATE
+        // instead of one DB round-trip per day (N sequential queries → 1 query)
+        const datesToReset: string[] = [];
         for (const booking of bookingsToClear) {
           const start = new Date(booking.check_in_date) > new Date() ? booking.check_in_date : todayStr;
           const end = booking.check_out_date;
-          
           let current = new Date(start);
           const endDay = new Date(end);
           while (current < endDay) {
-            const dStr = current.toISOString().split('T')[0];
-            await execute(
-              'UPDATE room_availability SET availability_status = "Available" WHERE room_id = ? AND available_date = ?',
-              [roomId, dStr]
-            );
+            datesToReset.push(current.toISOString().split('T')[0]);
             current.setDate(current.getDate() + 1);
           }
+        }
+        if (datesToReset.length > 0) {
+          await execute(
+            'UPDATE room_availability SET availability_status = "Available" WHERE room_id = ? AND available_date IN (?)',
+            [roomId, datesToReset]
+          );
         }
 
         // 6. Log the action in front_desk_records
@@ -1365,14 +1362,6 @@ export const dbOps = {
           revenue: isNaN(revenue) || revenue === null ? 0 : revenue
         };
       });
-
-      // Console log formatted as Jan: xxxx, Feb: xxxx, ...
-      const abbreviations = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      const logData: { [key: string]: number } = {};
-      trends.forEach((t, i) => {
-        logData[abbreviations[i]] = t.revenue;
-      });
-      console.log('Monthly Revenue Data:\n', logData);
 
       return trends;
     });

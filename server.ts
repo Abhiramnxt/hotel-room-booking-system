@@ -1206,55 +1206,6 @@ async function runWhatsAppDispatch(
   bookingId?: string | number
 ): Promise<boolean> {
   const result = await sendWhatsAppMessage(phone, message, whatsappConfig);
-  const finalMetaRecipient = result.recipientPhone ? result.recipientPhone.replace(/\D/g, '') : phone.replace(/\D/g, '');
-  
-  const payload = {
-    messaging_product: "whatsapp",
-    recipient_type: "individual",
-    to: finalMetaRecipient,
-    type: "text",
-    text: {
-      preview_url: false,
-      body: message
-    }
-  };
-
-  let parsedResponse = null;
-  try {
-    parsedResponse = JSON.parse(result.apiResponse || "{}");
-  } catch (e) {
-    parsedResponse = result.apiResponse || null;
-  }
-
-  const booking = {
-    guestName: guestName || "N/A",
-    id: bookingId || "N/A",
-    phoneNumber: phone
-  };
-  const formattedPhoneNumber = result.recipientPhone || phone;
-  const recipientNumber = finalMetaRecipient;
-  const response = {
-    data: parsedResponse
-  };
-
-  console.log("Booking Guest:", booking.guestName);
-  console.log("Booking ID:", booking.id);
-  console.log("Stored Number:", booking.phoneNumber);
-  console.log("Formatted Number:", formattedPhoneNumber);
-  console.log("Recipient Sent To Meta:", recipientNumber);
-  console.log("Request Payload:", payload);
-  console.log("Meta Response:", response.data);
-
-  console.log(`=== WHATSAPP DISPATCH EXECUTION ===
-* Guest Name: ${guestName || 'N/A'}
-* Booking ID: ${bookingId || 'N/A'}
-* Original Guest Phone Number: ${phone}
-* Formatted Phone Number: ${result.recipientPhone || phone}
-* Final Recipient Number Sent To Meta: ${finalMetaRecipient}
-* Meta API Response: ${result.apiResponse || 'N/A'}
-* Message ID (wamid): ${result.messageId || 'N/A'}
-* Delivery Status: ${result.success ? '🟢 Delivered Successfully' : '🔴 Delivery Failed'}
-====================================`);
 
   if (result.success) {
     await dbOps.updateCommunicationLogStatus(
@@ -1766,9 +1717,12 @@ app.post('/api/auth/bulk-dispatch', async (req, res) => {
   } = req.body;
 
   try {
-    const guests = await dbOps.getGuests();
-    const accounts = await dbOps.getGuestAccounts();
-    const bookings = await dbOps.getBookings();
+    // Fetch all required data in parallel to eliminate sequential DB wait time
+    const [guests, accounts, bookings] = await Promise.all([
+      dbOps.getGuests(),
+      dbOps.getGuestAccounts(),
+      dbOps.getBookings()
+    ]);
 
     let resolvedAccounts: any[] = [];
 

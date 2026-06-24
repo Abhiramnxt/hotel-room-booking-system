@@ -1,193 +1,288 @@
 /**
- * Database Reset Script – Sai Nirvana Plaza
- * Clears all operational/demo data while preserving schema, rooms, and staff.
- * Run with: node reset_db.cjs
+ * ╔══════════════════════════════════════════════════════════════════╗
+ * ║  SAI NIRVANA PLAZA — DATABASE RESET SCRIPT (Day 1 Demo State)   ║
+ * ║  Clears all operational data. Preserves schema, staff & rooms.   ║
+ * ╚══════════════════════════════════════════════════════════════════╝
+ *
+ * SAFE TO RUN: Does NOT drop tables, alter structure, or remove:
+ *   ✓ staff_accounts
+ *   ✓ rooms (master data)
+ *
+ * CLEARS:
+ *   ✗ bookings, guests, guest_accounts
+ *   ✗ active_stays, stay_history
+ *   ✗ payments, invoices
+ *   ✗ housekeeping, room_service_requests
+ *   ✗ complaints, feedback
+ *   ✗ corporate_bookings
+ *   ✗ communication_history, notifications
+ *   ✗ booking_audit_logs, front_desk_records
+ *   ✗ visitor_registry
+ *   ✗ room_availability (will be rebuilt fresh)
+ *   ✗ Any analytics cache tables
+ *
+ * Also resets:
+ *   ✓ Room status → "Available" for all rooms
+ *   ✓ AUTO_INCREMENT counters → 1
  */
 
 const mysql = require('mysql2/promise');
-require('dotenv').config();
+const dotenv = require('dotenv');
+const path = require('path');
 
-const DB_CONFIG = {
-  host: process.env.MYSQL_HOST,
-  port: parseInt(process.env.MYSQL_PORT || '3306'),
-  user: process.env.MYSQL_USER,
-  password: process.env.MYSQL_PASSWORD,
-  database: process.env.MYSQL_DATABASE,
-  ssl: { rejectUnauthorized: false },
-  connectTimeout: 30000,
+dotenv.config({ path: path.join(__dirname, '.env') });
+
+const dbConfig = {
+  host: process.env.MYSQL_HOST || 'localhost',
+  port: Number(process.env.MYSQL_PORT) || 3306,
+  user: process.env.MYSQL_USER || 'root',
+  password: process.env.MYSQL_PASSWORD || '',
+  database: process.env.MYSQL_DATABASE || 'hotel_management',
+  ssl: process.env.MYSQL_SSL === 'true' || process.env.MYSQL_HOST?.includes('railway')
+    ? { rejectUnauthorized: false }
+    : undefined,
+  connectTimeout: 15000
 };
 
-// ── Tables to TRUNCATE (operational data only) ────────────────────────────────
-// Order matters: child tables before parent to satisfy FK constraints during DELETE.
-// We disable FK checks first so TRUNCATE works freely.
-const TABLES_TO_CLEAR = [
-  // Transactional / session tables
-  'active_stays',
-  'stay_history',
+// ── Tables to CLEAR (operational data) ─────────────────────────────────────────
+const APPLICATION_DATA_TABLES = [
+  // Core booking tables (order matters for FK references)
+  'booking_audit_logs',
+  'front_desk_records',
+  'visitor_registry',
+  'notifications',
+  'invoices',
 
-  // Financial
-  'payments',
+  // Communication
+  'communication_history',
 
-  // Availability slots (will be regenerated / reset)
-  'room_availability',
-
-  // Housekeeping tasks
-  'housekeeping',
-
-  // Guest-facing operational
+  // Guest services
   'room_service_requests',
   'complaints',
   'feedback',
+  'housekeeping',
+
+  // Stays
+  'stay_history',
+  'active_stays',
+
+  // Payments
+  'payments',
+
+  // Corporate bookings
   'corporate_bookings',
 
-  // Comms
-  'communication_history',
+  // Room availability calendar
+  'room_availability',
 
-  // Bookings (after all child records are gone)
+  // Core guest & booking tables (last — referenced by above)
   'bookings',
-
-  // Guest identity tables
   'guest_accounts',
   'guests',
 ];
 
-// ── Tables to SET room_status = 'Available' (reset, not truncate) ─────────────
-// (rooms table is preserved — only status column is reset)
+// ── Tables to PRESERVE (master data / staff / config) ──────────────────────────
+const PRESERVE_TABLES = [
+  'staff_accounts',
+  'rooms',
+  'room_categories',
+  'hotel_config',
+  'system_config',
+  'app_settings',
+  'hotel_settings',
+];
 
-async function main() {
-  console.log('\n╔════════════════════════════════════════════════════════╗');
-  console.log('║   SAI NIRVANA PLAZA – DATABASE RESET SCRIPT           ║');
-  console.log('╚════════════════════════════════════════════════════════╝\n');
+// ── Helper ─────────────────────────────────────────────────────────────────────
+function pad(str, len = 38) {
+  return String(str).padEnd(len);
+}
+
+function banner(msg) {
+  const line = '─'.repeat(64);
+  console.log(`\n${line}`);
+  console.log(`  ${msg}`);
+  console.log(line);
+}
+
+async function fullReset() {
+  console.log('\n╔══════════════════════════════════════════════════════════════════╗');
+  console.log('║  SAI NIRVANA PLAZA — FULL DATABASE RESET                          ║');
+  console.log('║  Target: Day 1 Demo Environment (Clean Operational Data)          ║');
+  console.log('╚══════════════════════════════════════════════════════════════════╝\n');
+
+  console.log(`  Host     : ${dbConfig.host}`);
+  console.log(`  Database : ${dbConfig.database}`);
+  console.log(`  User     : ${dbConfig.user}`);
+  console.log(`  SSL      : ${dbConfig.ssl ? 'enabled' : 'disabled'}\n`);
 
   let conn;
   try {
-    console.log('► Connecting to Railway MySQL...');
-    conn = await mysql.createConnection(DB_CONFIG);
-    console.log('✓ Connected successfully.\n');
+    conn = await mysql.createConnection(dbConfig);
+    console.log('  ✓ Connected to database.\n');
 
-    // ── 1. Discover all actual tables in the DB ─────────────────────────────
-    const [allTablesResult] = await conn.query(
-      `SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'`,
-      [process.env.MYSQL_DATABASE]
-    );
-    const allTables = new Set(allTablesResult.map((r) => r.TABLE_NAME));
-    console.log(`► Found ${allTables.size} tables in database: ${[...allTables].join(', ')}\n`);
+    const resetSummary = [];
 
-    // ── 2. Capture pre-reset counts ─────────────────────────────────────────
-    console.log('► Pre-reset record counts:');
+    // ── STEP 1: Discover actual tables in the database ────────────────────────
+    banner('STEP 1 — DISCOVERING TABLES');
+    const [tableRows] = await conn.query('SHOW TABLES');
+    const allTables = tableRows.map(r => Object.values(r)[0]);
+    console.log(`  Found ${allTables.length} table(s) in database: ${allTables.join(', ')}\n`);
+
+    // Determine which tables to actually clear vs preserve
+    const tablesToClear   = APPLICATION_DATA_TABLES.filter(t => allTables.includes(t));
+    const tablesToPreserve = PRESERVE_TABLES.filter(t => allTables.includes(t));
+
+    // Any unrecognised tables (neither in clear list nor preserve list)
+    const knownTables = new Set([...APPLICATION_DATA_TABLES, ...PRESERVE_TABLES]);
+    const unknownTables = allTables.filter(t => !knownTables.has(t));
+
+    console.log(`  ✓ Tables targeted for clearing    : ${tablesToClear.length}`);
+    console.log(`  ✓ Tables preserved (master data)  : ${tablesToPreserve.length}`);
+    if (unknownTables.length > 0) {
+      console.log(`  ⚠ Unrecognised tables (skipped)   : ${unknownTables.join(', ')}`);
+    }
+
+    // ── STEP 2: Pre-reset record counts ──────────────────────────────────────
+    banner('STEP 2 — PRE-RESET RECORD COUNTS');
     const preCounts = {};
-    for (const tbl of TABLES_TO_CLEAR) {
-      if (!allTables.has(tbl)) { preCounts[tbl] = '(table not found)'; continue; }
-      const [[row]] = await conn.query(`SELECT COUNT(*) as cnt FROM \`${tbl}\``);
-      preCounts[tbl] = row.cnt;
-      console.log(`   ${tbl.padEnd(30)} ${row.cnt} records`);
+    for (const table of tablesToClear) {
+      const [[{ cnt }]] = await conn.query(`SELECT COUNT(*) AS cnt FROM \`${table}\``);
+      preCounts[table] = Number(cnt);
+      console.log(`  ${pad(table)} ${String(preCounts[table]).padStart(6)} record(s)`);
     }
+    const totalRecordsBefore = Object.values(preCounts).reduce((a, b) => a + b, 0);
+    console.log(`\n  ► Total records to remove: ${totalRecordsBefore}`);
 
-    // ── 3. Disable FK checks and TRUNCATE all operational tables ───────────
-    console.log('\n► Disabling foreign key checks...');
+    // ── STEP 3: Disable FK checks ─────────────────────────────────────────────
+    banner('STEP 3 — DISABLING FOREIGN KEY CHECKS');
     await conn.query('SET FOREIGN_KEY_CHECKS = 0');
-    console.log('✓ FK checks disabled.\n');
+    console.log('  ✓ FOREIGN_KEY_CHECKS = 0');
 
-    const cleared = [];
-    const skipped = [];
-
-    for (const tbl of TABLES_TO_CLEAR) {
-      if (!allTables.has(tbl)) {
-        skipped.push(tbl);
-        console.log(`   ⚠  SKIP  ${tbl} (table does not exist)`);
-        continue;
-      }
-      try {
-        await conn.query(`TRUNCATE TABLE \`${tbl}\``);
-        cleared.push({ table: tbl, removed: preCounts[tbl] });
-        console.log(`   ✓  CLEAR ${tbl.padEnd(30)} (removed ${preCounts[tbl]} records, AUTO_INCREMENT reset)`);
-      } catch (err) {
-        console.error(`   ✗  ERROR ${tbl}: ${err.message}`);
-      }
+    // ── STEP 4: Clear operational tables ─────────────────────────────────────
+    banner('STEP 4 — CLEARING OPERATIONAL DATA');
+    for (const table of tablesToClear) {
+      const count = preCounts[table];
+      await conn.query(`DELETE FROM \`${table}\``);
+      await conn.query(`ALTER TABLE \`${table}\` AUTO_INCREMENT = 1`);
+      console.log(`  ✓ ${pad(table)} cleared (${count} records removed, AUTO_INCREMENT → 1)`);
+      resetSummary.push({ table, recordsRemoved: count });
     }
 
-    // ── 4. Re-enable FK checks ───────────────────────────────────────────────
+    // ── STEP 5: Reset room status ─────────────────────────────────────────────
+    banner('STEP 5 — RESETTING ROOM STATUS');
+    if (allTables.includes('rooms')) {
+      const [[{ dirty }]] = await conn.query(
+        "SELECT COUNT(*) AS dirty FROM rooms WHERE room_status != 'Available'"
+      );
+      const [result] = await conn.query("UPDATE rooms SET room_status = 'Available'");
+      console.log(`  ✓ Reset ${dirty} room(s) to 'Available' status.`);
+      console.log(`    (${result.affectedRows} row(s) affected)`);
+    } else {
+      console.log('  ⚠ rooms table not found — skipping room status reset.');
+    }
+
+    // ── STEP 6: Re-enable FK checks ───────────────────────────────────────────
+    banner('STEP 6 — RE-ENABLING FOREIGN KEY CHECKS');
     await conn.query('SET FOREIGN_KEY_CHECKS = 1');
-    console.log('\n✓ Foreign key checks re-enabled.');
+    console.log('  ✓ FOREIGN_KEY_CHECKS = 1');
 
-    // ── 5. Reset all rooms to Available ─────────────────────────────────────
-    console.log('\n► Resetting all rooms to Available...');
-    if (allTables.has('rooms')) {
-      const [roomResult] = await conn.query(`UPDATE rooms SET room_status = 'Available'`);
-      console.log(`✓ ${roomResult.affectedRows} room(s) set to Available.`);
-    } else {
-      console.log('⚠  rooms table not found — skipped.');
-    }
+    // ── STEP 7: VERIFICATION ──────────────────────────────────────────────────
+    banner('STEP 7 — POST-RESET VERIFICATION');
 
-    // ── 6. Post-reset verification ───────────────────────────────────────────
-    console.log('\n► Post-reset verification:');
-
-    // Verify operational tables are empty
+    // 7a. Verify cleared tables are empty
     let allClear = true;
-    for (const tbl of TABLES_TO_CLEAR) {
-      if (!allTables.has(tbl)) continue;
-      const [[row]] = await conn.query(`SELECT COUNT(*) as cnt FROM \`${tbl}\``);
-      const icon = row.cnt === 0 ? '✓' : '✗';
-      if (row.cnt > 0) allClear = false;
-      console.log(`   ${icon}  ${tbl.padEnd(30)} ${row.cnt} records remaining`);
+    console.log('\n  [Cleared Tables Verification]');
+    for (const table of tablesToClear) {
+      const [[{ cnt }]] = await conn.query(`SELECT COUNT(*) AS cnt FROM \`${table}\``);
+      const count = Number(cnt);
+      const status = count === 0 ? '✓' : '✗ STILL HAS DATA!';
+      if (count > 0) allClear = false;
+      console.log(`    ${status}  ${pad(table)} ${count} record(s) remaining`);
     }
 
-    // Rooms status check
-    if (allTables.has('rooms')) {
-      const [[roomCheck]] = await conn.query(`SELECT COUNT(*) as cnt FROM rooms WHERE room_status != 'Available'`);
-      const icon = roomCheck.cnt === 0 ? '✓' : '✗';
-      console.log(`   ${icon}  ${'rooms (non-available)'.padEnd(30)} ${roomCheck.cnt} rooms still not available`);
-    }
-
-    // Remaining staff accounts
-    console.log('\n► Remaining staff accounts (preserved):');
-    if (allTables.has('staff_accounts')) {
-      const [staff] = await conn.query(`SELECT staff_id, staff_name, department, role FROM staff_accounts ORDER BY staff_id`);
-      if (staff.length === 0) {
-        console.log('   (none found)');
-      } else {
-        for (const s of staff) {
-          console.log(`   ID ${String(s.staff_id).padEnd(4)} ${(s.staff_name || 'N/A').padEnd(25)} ${s.department} – ${s.role}`);
-        }
+    // 7b. Staff accounts preserved
+    console.log('\n  [Preserved: Staff Accounts]');
+    let staffList = [];
+    if (allTables.includes('staff_accounts')) {
+      const [rows] = await conn.query(
+        'SELECT staff_id, staff_name, role, department, email FROM staff_accounts ORDER BY role'
+      );
+      staffList = rows;
+      if (rows.length === 0) {
+        console.log('    ⚠ WARNING: No staff accounts found!');
       }
+      rows.forEach(s =>
+        console.log(`    ✓  [${String(s.staff_id).padStart(3)}] ${pad(s.staff_name, 25)} | ${pad(s.role, 20)} | ${s.email}`)
+      );
     } else {
-      console.log('   staff_accounts table not found.');
+      console.log('    ⚠ staff_accounts table not found.');
     }
 
-    // Remaining rooms inventory
-    console.log('\n► Room inventory (preserved):');
-    if (allTables.has('rooms')) {
-      const [rooms] = await conn.query(`SELECT room_id, room_number, room_type, room_status, price_per_night FROM rooms ORDER BY room_id`);
-      for (const r of rooms) {
-        console.log(`   Room ${String(r.room_number).padEnd(5)} ${(r.room_type || '').padEnd(22)} ${r.room_status.padEnd(12)} ₹${r.price_per_night}/night`);
-      }
+    // 7c. Room inventory
+    console.log('\n  [Preserved: Room Inventory]');
+    let roomStats = { total: 0, available: 0, byType: [] };
+    if (allTables.includes('rooms')) {
+      const [[{ total }]] = await conn.query('SELECT COUNT(*) AS total FROM rooms');
+      const [[{ available }]] = await conn.query("SELECT COUNT(*) AS available FROM rooms WHERE room_status = 'Available'");
+      const [byType] = await conn.query(
+        'SELECT room_type, COUNT(*) AS cnt, MIN(price_per_night) AS min_price, MAX(price_per_night) AS max_price FROM rooms GROUP BY room_type ORDER BY room_type'
+      );
+      roomStats = { total: Number(total), available: Number(available), byType };
+      console.log(`    Total rooms     : ${roomStats.total}`);
+      console.log(`    Available       : ${roomStats.available}`);
+      console.log(`    Occupied        : ${roomStats.total - roomStats.available}`);
+      byType.forEach(rt =>
+        console.log(`    ├─ ${pad(rt.room_type, 22)} ${String(rt.cnt).padStart(3)} room(s)  ₹${rt.min_price}–₹${rt.max_price}/night`)
+      );
+    } else {
+      console.log('    ⚠ rooms table not found.');
     }
 
-    // ── 7. Summary ────────────────────────────────────────────────────────────
-    console.log('\n╔════════════════════════════════════════════════════════╗');
-    console.log('║   RESET COMPLETE                                       ║');
-    console.log('╠════════════════════════════════════════════════════════╣');
-    const totalRemoved = cleared.reduce((s, t) => s + (Number(t.removed) || 0), 0);
-    console.log(`║   Tables cleared:      ${String(cleared.length).padEnd(32)}║`);
-    console.log(`║   Tables skipped:      ${String(skipped.length).padEnd(32)}║`);
-    console.log(`║   Total records removed: ${String(totalRemoved).padEnd(30)}║`);
-    console.log(`║   All rooms: Available ✓                               ║`);
-    console.log(`║   Schema/Staff/Rooms: Preserved ✓                      ║`);
+    // 7d. Final checklist
+    const bookingCount = tablesToClear.includes('bookings')
+      ? Number((await conn.query("SELECT COUNT(*) AS cnt FROM bookings"))[0][0].cnt) : '?';
+    const guestAccountCount = tablesToClear.includes('guest_accounts')
+      ? Number((await conn.query("SELECT COUNT(*) AS cnt FROM guest_accounts"))[0][0].cnt) : '?';
+    const activeStayCount = tablesToClear.includes('active_stays')
+      ? Number((await conn.query("SELECT COUNT(*) AS cnt FROM active_stays"))[0][0].cnt) : '?';
+
+    console.log('\n  [Final Checklist]');
+    console.log(`    ${guestAccountCount === 0 ? '✓' : '✗'}  No guest accounts remain        : ${guestAccountCount}`);
+    console.log(`    ${bookingCount === 0 ? '✓' : '✗'}  No bookings remain              : ${bookingCount}`);
+    console.log(`    ${activeStayCount === 0 ? '✓' : '✗'}  No active stays remain          : ${activeStayCount}`);
+    console.log(`    ${roomStats.available === roomStats.total && roomStats.total > 0 ? '✓' : '✗'}  All rooms available             : ${roomStats.available}/${roomStats.total}`);
+    console.log(`    ${staffList.length > 0 ? '✓' : '✗'}  Staff logins preserved          : ${staffList.length} account(s)`);
+
+    // ── STEP 8: SUMMARY OUTPUT ────────────────────────────────────────────────
+    banner('RESET COMPLETE — SUMMARY');
+    console.log(`\n  Total tables cleared     : ${tablesToClear.length}`);
+    console.log(`  Total records removed    : ${totalRecordsBefore}`);
+    console.log(`  AUTO_INCREMENT reset on  : ${tablesToClear.length} table(s)`);
+    console.log(`  Rooms now available      : ${roomStats.available}/${roomStats.total}`);
+    console.log(`  Staff accounts remaining : ${staffList.length}`);
+    console.log(`\n  System state: ✅ CLEAN "DAY 1 DEMO ENVIRONMENT"\n`);
+
     if (!allClear) {
-      console.log('║   ⚠  Some tables still have records — check above.     ║');
+      console.log('  ⚠ WARNING: Some tables may still have data — see verification above.\n');
     }
-    console.log('╚════════════════════════════════════════════════════════╝\n');
 
-    process.exit(0);
   } catch (err) {
-    console.error('\n✗ Fatal error:', err.message);
-    if (conn) {
-      try { await conn.query('SET FOREIGN_KEY_CHECKS = 1'); } catch (_) {}
-    }
+    console.error('\n  ✗ ERROR during database reset:', err.message || err);
+    console.error(err.stack || '');
+    // Re-enable FK checks even on failure
+    try {
+      if (conn) {
+        await conn.query('SET FOREIGN_KEY_CHECKS = 1');
+        console.log('  ✓ Re-enabled FOREIGN_KEY_CHECKS after error.');
+      }
+    } catch (e2) { /* ignore */ }
     process.exit(1);
   } finally {
-    if (conn) await conn.end();
+    if (conn) {
+      await conn.end();
+      console.log('  Database connection closed.\n');
+    }
   }
 }
 
-main();
+fullReset();

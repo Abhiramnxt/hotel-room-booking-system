@@ -13,11 +13,13 @@ export function initMysqlPool() {
     password: process.env.MYSQL_PASSWORD,
     database: process.env.MYSQL_DATABASE,
     waitForConnections: true,
-    connectionLimit: 10,
+    connectionLimit: 20,           // Increased from 10 — supports concurrent staff + guest sessions
     queueLimit: 0,
-    ssl: process.env.MYSQL_SSL === 'true'
-      ? { rejectUnauthorized: false }
-      : undefined
+    connectTimeout: 30000,         // 30s timeout for Railway remote connections
+    enableKeepAlive: true,         // Prevent Railway from silently dropping idle connections
+    keepAliveInitialDelay: 10000,  // Send first keepalive packet after 10s of idle
+    // SSL always enabled — Railway MySQL requires it regardless of env configuration
+    ssl: { rejectUnauthorized: false },
   });
   return pool;
 }

@@ -48,6 +48,17 @@ const getTodayAndTomorrow = () => {
   };
 };
 
+// Defined at module scope — avoids re-creating a new function on every map() iteration
+const getCategoryLabel = (type: string) => {
+  switch(type) {
+    case 'Standard': return 'Standard Cabin';
+    case 'Deluxe': return 'Premium Deluxe';
+    case 'Executive Suite': return 'Executive Suite';
+    case 'Presidential Suite': return 'Presidential Suite';
+    default: return type;
+  }
+};
+
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('theme');
@@ -524,16 +535,6 @@ export default function App() {
                     const ratingAvg = room.reviews && room.reviews.length > 0
                       ? (room.reviews.reduce((acc, r) => acc + r.rating, 0) / room.reviews.length).toFixed(1)
                       : "4.8";
-
-                    const getCategoryLabel = (type: string) => {
-                      switch(type) {
-                        case 'Standard': return 'Standard Cabin';
-                        case 'Deluxe': return 'Premium Deluxe';
-                        case 'Executive Suite': return 'Executive Suite';
-                        case 'Presidential Suite': return 'Presidential Suite';
-                        default: return type;
-                      }
-                    };
 
                     return (
                       <motion.div
