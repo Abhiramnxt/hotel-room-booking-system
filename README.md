@@ -2,79 +2,138 @@
 
 </div>
 
-# Sai Nirvana Plaza Booking System
+# 🏨 Sai Nirvana Plaza Hotel Management System
 
-A state-of-the-art hotel booking, operations, front desk, and analytics management dashboard designed for Sai Nirvana Plaza (Dwarka, New Delhi). Features intelligent guest chatbots, instant simulated/live Meta WhatsApp Cloud API communications, SendGrid email notifications, automated GST invoice PDF generation, and active stay telemetry.
+## Introduction
+
+Sai Nirvana Plaza Hotel Management System is a full-stack web application developed to digitize and automate hotel operations. The system provides a centralized platform for managing reservations, guest accounts, room availability, check-in and check-out activities, housekeeping operations, guest services, communication management, and business reporting.
+
+The application was developed as an internship project with the objective of reducing manual hotel management processes and improving operational efficiency through automation and real-time data management.
 
 ---
 
-## 🚀 Run Locally
+## Core Functionalities
 
-### Prerequisites
-- [Node.js](https://nodejs.org/) (v18 or higher recommended)
-- npm (Node Package Manager)
+### Guest Services
 
-### Step 1: Install Dependencies
+* Room Search and Booking
+* Guest Registration and Login
+* Active Stay Dashboard
+* Room Service Requests
+* Complaint Submission
+* Feedback Management
+* Booking History and Receipts
+
+### Front Desk Operations
+
+* Reservation Management
+* Guest Account Creation
+* Credential Distribution
+* Check-In and Check-Out Processing
+* Booking Verification
+* Guest Record Management
+
+### Hotel Management
+
+* Revenue Monitoring
+* Occupancy Tracking
+* Corporate Booking Management
+* Operational Reporting
+* Performance Analytics
+
+### Housekeeping Operations
+
+* Task Assignment and Tracking
+* Room Cleaning Status Updates
+* Room Availability Monitoring
+
+---
+
+## Technology Stack
+
+| Layer         | Technologies                             |
+| ------------- | ---------------------------------------- |
+| Frontend      | React.js, TypeScript, Vite, Tailwind CSS |
+| Backend       | Node.js, Express.js                      |
+| Database      | Railway MySQL                            |
+| Communication | WhatsApp Business API, Nodemailer        |
+| Reporting     | PDF Reports, CSV Export                  |
+
+---
+
+## Major Modules
+
+* Guest Management
+* Room Management
+* Booking Management
+* Active Stay Management
+* Housekeeping Management
+* Communication Management
+* Feedback & Complaint Management
+* Payment Management
+* Reporting & Analytics
+
+---
+
+## Installation
+
+### Install Dependencies
+
 ```bash
 npm install
 ```
 
-### Step 2: Configure Environment Variables
-Copy the existing `.env.example` file to `.env`:
-```bash
-cp .env.example .env
-```
-Open `.env` and fill in the environment variable values:
-- `GEMINI_API_KEY`: Required for AI guest chatbots and priority classifications.
-- `APP_URL`: Your local or hosted app URL.
-- `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_BUSINESS_ACCOUNT_ID`: Credentials for Meta WhatsApp Cloud API (simulation mode operates if blank).
-- `SENDGRID_API_KEY`, `SENDGRID_SENDER_EMAIL`: Credentials for SendGrid Email dispatch (simulation mode operates if blank).
+### Configure Environment Variables
 
-### Step 3: Start the Development Server
+Create a `.env` file and configure the required database and communication credentials.
+
+### Start Development Server
+
 ```bash
 npm run dev
 ```
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+Access the application at:
+
+```text
+http://localhost:3000
+```
 
 ---
 
-## 📦 Production Build and Run
+## Build for Production
 
-To build and run the optimized production bundle locally:
 ```bash
-# Compile client assets and bundle Express backend
 npm run build
-
-# Start the compiled Express server
 npm run start
 ```
 
 ---
 
-## ☁️ Deploying to Vercel
+## Database
 
-This project is fully prepared for zero-config deployment on Vercel as a hybrid application with static frontend routing and Express serverless functions.
+The application uses Railway MySQL as its primary database and manages:
 
-### Steps to Deploy
-
-1. **Push code to GitHub**: Create a repository and push your workspace. The secure `.gitignore` will automatically prevent local `.env` configuration from being exposed.
-2. **Import Project to Vercel**: Connect your GitHub account to Vercel, import the repository, and select **Vite** (or **Other**) as the framework.
-3. **Configure Build Settings**: Vercel automatically detects build commands. Verify the settings match:
-   - **Build Command**: `npm run build`
-   - **Output Directory**: `dist`
-4. **Environment Variables**: Add all variables defined in `.env.example` to the **Environment Variables** section of your Vercel Project Settings:
-   - `GEMINI_API_KEY`
-   - `APP_URL` (Set this to your Vercel deployment domain, e.g., `https://your-app.vercel.app`)
-   - `WHATSAPP_TOKEN`
-   - `WHATSAPP_PHONE_NUMBER_ID`
-   - `WHATSAPP_BUSINESS_ACCOUNT_ID`
-   - `SENDGRID_API_KEY`
-   - `SENDGRID_SENDER_EMAIL`
-5. **Deploy**: Click **Deploy**. Vercel will build the Vite client, register the Express server under the serverless `/api` path via `vercel.json` rewrites, and launch the site.
+* Guest Records
+* Room Inventory
+* Booking Information
+* Payment Transactions
+* Active Stays
+* Housekeeping Tasks
+* Communication Logs
+* Feedback and Complaints
+* Corporate Reservations
 
 ---
 
-## 🔒 Security & Source Control
+## Project Outcome
 
-- **Environment Isolation**: No production tokens, credentials, or API keys are committed to the codebase.
-- **Git Protection**: The `.gitignore` excludes `.env`, `.env.*` (except `.env.example`), `.vercel/` metadata, and local diagnostic logs to prevent security leaks.
+The system successfully automates key hotel operations through a centralized platform, improving efficiency, reducing manual work, and providing a better experience for both hotel staff and guests.
+
+---
+
+## Author
+
+**ABHIRAM THUNIKIPATI**
+
+Internship Project – Sai Nirvana Plaza Hotel Management System
